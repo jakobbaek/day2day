@@ -228,7 +228,7 @@ class MarketDataCollector:
         
         all_data = []
         last_token_check = time.time()
-        token_check_interval = 3600  # Check every hour (3600 seconds)
+        token_check_interval = 400  # Check every hour (3600 seconds)
         
         for stock in stocks:
             uic = stock["Identifier"]
