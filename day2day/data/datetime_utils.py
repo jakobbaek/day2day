@@ -1,0 +1,308 @@
+"""Datetime utilities for market data standardization."""
+
+import polars as pl
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta, time
+from typing import Tuple, Dict, List
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class DateTimeStandardizer:
+    """Handles datetime standardization and market hours inference."""
+    
+    def __init__(self):
+        self.market_hours_cache: Dict[str, Tuple[time, time]] = {}
+        
+    def standardize_to_gmt(self, df: pl.DataFrame, datetime_col: str = "datetime") -> pl.DataFrame:
+        """
+        Convert datetime column to GMT timezone.
+        
+        Args:
+            df: Input DataFrame
+            datetime_col: Name of datetime column
+            
+        Returns:
+            DataFrame with GMT standardized datetime
+        """
+        logger.info("Standardizing datetimes to GMT")
+        
+        # Ensure datetime is properly parsed
+        df = df.with_columns(
+            pl.col(datetime_col).str.slice(0, length=19).str.to_datetime("%Y-%m-%dT%H:%M:%S")
+        )
+        
+        # Convert to UTC/GMT if timezone info is available
+        # For Danish market data, assume CET/CEST timezone
+        # CET is UTC+1, CEST is UTC+2 (daylight saving)
+        df = df.with_columns(
+            pl.col(datetime_col).map_elements(
+                lambda dt: self._convert_danish_to_gmt(dt),
+                return_dtype=pl.Datetime
+            ).alias(f"{datetime_col}_gmt")
+        )
+        
+        # Replace original datetime column
+        df = df.drop(datetime_col).rename({f"{datetime_col}_gmt": datetime_col})
+        
+        return df
+    
+    def _convert_danish_to_gmt(self, dt: datetime) -> datetime:
+        """
+        Convert Danish timezone (CET/CEST) to GMT.
+        
+        Args:
+            dt: Datetime in Danish timezone
+            
+        Returns:
+            Datetime in GMT
+        """
+        if dt is None:
+            return None
+            
+        # Simple conversion assuming CET (UTC+1) for winter, CEST (UTC+2) for summer
+        # DST in Europe: last Sunday in March to last Sunday in October
+        year = dt.year
+        
+        # Calculate DST boundaries
+        march_last_sunday = self._last_sunday_of_month(year, 3)
+        october_last_sunday = self._last_sunday_of_month(year, 10)
+        
+        # Check if in daylight saving time
+        if march_last_sunday <= dt.replace(tzinfo=None) < october_last_sunday:
+            # CEST (UTC+2)
+            gmt_dt = dt - timedelta(hours=2)
+        else:
+            # CET (UTC+1)
+            gmt_dt = dt - timedelta(hours=1)
+        
+        return gmt_dt
+    
+    def _last_sunday_of_month(self, year: int, month: int) -> datetime:
+        """Find the last Sunday of a given month."""
+        # Start with the last day of the month
+        if month == 12:
+            last_day = datetime(year + 1, 1, 1) - timedelta(days=1)
+        else:
+            last_day = datetime(year, month + 1, 1) - timedelta(days=1)
+        
+        # Find the last Sunday
+        days_since_sunday = last_day.weekday() + 1
+        if days_since_sunday == 7:
+            days_since_sunday = 0
+        
+        last_sunday = last_day - timedelta(days=days_since_sunday)
+        return last_sunday
+    
+    def infer_market_hours(self, df: pl.DataFrame, ticker: str) -> Tuple[time, time]:
+        """
+        Infer market opening hours from the data for a specific ticker.
+        
+        Args:
+            df: DataFrame with market data
+            ticker: Ticker symbol
+            
+        Returns:
+            Tuple of (market_open_time, market_close_time)
+        """
+        if ticker in self.market_hours_cache:
+            return self.market_hours_cache[ticker]
+        
+        logger.info(f"Inferring market hours for {ticker}")
+        
+        # Filter data for this ticker
+        ticker_data = df.filter(pl.col("ticker") == ticker)
+        
+        if ticker_data.is_empty():
+            # Default to Copenhagen Stock Exchange hours in GMT
+            # CSE is typically 9:00-17:00 CET, which is 8:00-16:00 GMT (winter) or 7:00-15:00 GMT (summer)
+            default_open = time(8, 0)  # Conservative estimate
+            default_close = time(16, 0)
+            self.market_hours_cache[ticker] = (default_open, default_close)
+            return default_open, default_close
+        
+        # Extract time component from datetime
+        ticker_data = ticker_data.with_columns(
+            pl.col("datetime").dt.time().alias("time_only"),
+            pl.col("datetime").dt.date().alias("date_only")
+        )
+        
+        # Group by date and find min/max times for each trading day
+        daily_hours = (ticker_data
+            .group_by("date_only")
+            .agg([
+                pl.col("time_only").min().alias("day_open"),
+                pl.col("time_only").max().alias("day_close"),
+                pl.col("time_only").count().alias("observations")
+            ])
+            .filter(pl.col("observations") > 10)  # Filter out days with too few observations
+        )
+        
+        if daily_hours.is_empty():
+            # Fallback to default hours
+            default_open = time(8, 0)
+            default_close = time(16, 0)
+            self.market_hours_cache[ticker] = (default_open, default_close)
+            return default_open, default_close
+        
+        # Calculate most common opening and closing times
+        open_times = daily_hours.select("day_open").to_series().to_list()
+        close_times = daily_hours.select("day_close").to_series().to_list()
+        
+        # Use mode (most common time) or median if mode is not clear
+        market_open = self._calculate_typical_time(open_times)
+        market_close = self._calculate_typical_time(close_times)
+        
+        self.market_hours_cache[ticker] = (market_open, market_close)
+        
+        logger.info(f"Inferred market hours for {ticker}: {market_open} - {market_close} GMT")
+        
+        return market_open, market_close
+    
+    def _calculate_typical_time(self, times: List[time]) -> time:
+        """Calculate the most typical time from a list of times."""
+        if not times:
+            return time(9, 0)  # Default fallback
+        
+        # Convert to minutes since midnight for easier calculation
+        minutes_list = [t.hour * 60 + t.minute for t in times]
+        
+        # Use median as a robust estimate
+        median_minutes = int(np.median(minutes_list))
+        
+        # Convert back to time
+        hours = median_minutes // 60
+        minutes = median_minutes % 60
+        
+        return time(hours, minutes)
+    
+    def create_complete_timeline(self, df: pl.DataFrame, ticker: str) -> pl.DataFrame:
+        """
+        Create a complete 1-minute timeline for market hours and fill missing values.
+        
+        Args:
+            df: DataFrame with market data for a specific ticker
+            ticker: Ticker symbol
+            
+        Returns:
+            DataFrame with complete timeline and forward-filled prices
+        """
+        logger.info(f"Creating complete timeline for {ticker}")
+        
+        # Get market hours
+        market_open, market_close = self.infer_market_hours(df, ticker)
+        
+        # Get date range from data
+        ticker_data = df.filter(pl.col("ticker") == ticker)
+        
+        if ticker_data.is_empty():
+            return df
+        
+        # Get min and max dates
+        min_date = ticker_data.select(pl.col("datetime").dt.date().min()).item()
+        max_date = ticker_data.select(pl.col("datetime").dt.date().max()).item()
+        
+        # Create complete timeline
+        complete_timeline = self._generate_market_timeline(
+            min_date, max_date, market_open, market_close
+        )
+        
+        # Convert to Polars DataFrame
+        timeline_df = pl.DataFrame({
+            "datetime": complete_timeline,
+            "ticker": [ticker] * len(complete_timeline)
+        })
+        
+        # Join with actual data and forward fill
+        complete_data = (timeline_df
+            .join(ticker_data, on=["datetime", "ticker"], how="left")
+            .sort("datetime")
+        )
+        
+        # Forward fill price columns
+        price_columns = ["high", "low", "open", "close"]
+        existing_price_cols = [col for col in price_columns if col in complete_data.columns]
+        
+        if existing_price_cols:
+            complete_data = complete_data.with_columns([
+                pl.col(col).fill_null(strategy="forward") for col in existing_price_cols
+            ])
+        
+        # Fill any remaining nulls with backward fill
+        if existing_price_cols:
+            complete_data = complete_data.with_columns([
+                pl.col(col).fill_null(strategy="backward") for col in existing_price_cols
+            ])
+        
+        return complete_data
+    
+    def _generate_market_timeline(self, start_date: datetime.date, end_date: datetime.date,
+                                market_open: time, market_close: time) -> List[datetime]:
+        """
+        Generate complete 1-minute timeline for market hours between dates.
+        
+        Args:
+            start_date: Start date
+            end_date: End date
+            market_open: Market opening time
+            market_close: Market closing time
+            
+        Returns:
+            List of datetime objects for each minute during market hours
+        """
+        timeline = []
+        current_date = start_date
+        
+        while current_date <= end_date:
+            # Skip weekends (Saturday=5, Sunday=6)
+            if current_date.weekday() < 5:  # Monday=0, Friday=4
+                
+                # Create datetime objects for each minute during market hours
+                current_datetime = datetime.combine(current_date, market_open)
+                end_datetime = datetime.combine(current_date, market_close)
+                
+                while current_datetime <= end_datetime:
+                    timeline.append(current_datetime)
+                    current_datetime += timedelta(minutes=1)
+            
+            current_date += timedelta(days=1)
+        
+        return timeline
+    
+    def standardize_all_instruments(self, df: pl.DataFrame) -> pl.DataFrame:
+        """
+        Standardize datetime and create complete timeline for all instruments.
+        
+        Args:
+            df: DataFrame with multiple instruments
+            
+        Returns:
+            DataFrame with standardized datetime and complete timelines
+        """
+        logger.info("Standardizing datetime for all instruments")
+        
+        # First standardize datetime to GMT
+        df = self.standardize_to_gmt(df)
+        
+        # Get unique tickers
+        tickers = df.select("ticker").unique().to_series().to_list()
+        
+        # Process each ticker separately
+        standardized_dfs = []
+        
+        for ticker in tickers:
+            logger.info(f"Processing ticker: {ticker}")
+            ticker_df = self.create_complete_timeline(df, ticker)
+            standardized_dfs.append(ticker_df)
+        
+        # Combine all tickers
+        result_df = pl.concat(standardized_dfs)
+        
+        # Sort by ticker and datetime
+        result_df = result_df.sort(["ticker", "datetime"])
+        
+        logger.info(f"Standardization complete. Final shape: {result_df.shape}")
+        
+        return result_df

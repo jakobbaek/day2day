@@ -177,13 +177,17 @@ keys/**/*.json
 *.gexf
 Specifications for day2day.txt
 
-# Project specific data directories
-data/
+# Project specific data directories (but not the Python package directories)
+/data/
 ins_data/
-models/
+/models/
 backtesting_data/
 *.pkl
 *.joblib
+
+# Allow Python package directories
+!/day2day/data/
+!/day2day/models/
 
 # IDE
 .vscode/
