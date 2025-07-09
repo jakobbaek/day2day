@@ -7,7 +7,17 @@ from dotenv import load_dotenv
 import json
 
 # Load environment variables from .env file
-load_dotenv()
+# Try to load from project root first, then current directory
+try:
+    project_root = Path(__file__).parent.parent.parent
+    env_path = project_root / ".env"
+    if env_path.exists():
+        load_dotenv(env_path)
+    else:
+        load_dotenv()  # Try current directory or system env
+except Exception:
+    # If loading fails, continue without .env (use system env vars)
+    pass
 
 class Settings:
     """Application settings management."""
