@@ -13,7 +13,13 @@ class Settings:
     """Application settings management."""
     
     def __init__(self):
-        self.base_dir = Path(__file__).parent.parent.parent
+        # Use MAIN_PATH from environment if set, otherwise use project root
+        main_path = os.getenv("MAIN_PATH")
+        if main_path:
+            self.base_dir = Path(main_path).expanduser().resolve()
+        else:
+            self.base_dir = Path(__file__).parent.parent.parent
+        
         self.data_dir = self.base_dir / "data"
         self.config_dir = self.base_dir / "config"
         
