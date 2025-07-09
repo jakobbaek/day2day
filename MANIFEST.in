@@ -1,0 +1,9 @@
+include README.md
+include about.py
+include requirements.txt
+include .env.example
+include AUTHENTICATION_GUIDE.md
+recursive-include day2day *.py
+recursive-include day2day *.json
+recursive-exclude * __pycache__
+recursive-exclude * *.py[co]

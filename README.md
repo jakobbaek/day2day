@@ -77,6 +77,9 @@
   ### Install the package
   pip install -e .
 
+  python3 -m venv day2day_env
+  source day2day_env/bin/activate
+
   ### Setup credentials in .env (only once)
   SAXO_CLIENT_ID=your_client_id
   SAXO_CLIENT_SECRET=your_client_secret
