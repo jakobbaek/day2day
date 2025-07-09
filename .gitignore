@@ -170,8 +170,27 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
-#key files
+# Key files and data
 keys/**/*.json
 *.csv
 *.gexf
 *.txt
+
+# Project specific data directories
+data/
+ins_data/
+models/
+backtesting_data/
+*.pkl
+*.joblib
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
