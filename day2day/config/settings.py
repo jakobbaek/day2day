@@ -46,6 +46,11 @@ class Settings:
         return os.getenv("SAXO_ACCESS_TOKEN", "")
     
     @property
+    def saxo_refresh_token(self) -> str:
+        """Get Saxo Bank refresh token from environment."""
+        return os.getenv("SAXO_REFRESH_TOKEN", "")
+    
+    @property
     def saxo_base_url(self) -> str:
         """Get Saxo Bank API base URL."""
         return os.getenv("SAXO_BASE_URL", "https://gateway.saxobank.com/sim/openapi")

@@ -29,6 +29,39 @@ class Day2DayAPI:
         # Configure logging
         logging.basicConfig(level=logging.INFO)
         
+    # Authentication
+    def authenticate_saxo_bank(self) -> bool:
+        """
+        Authenticate with Saxo Bank API using interactive OAuth flow.
+        
+        Returns:
+            True if authentication successful, False otherwise
+        """
+        try:
+            self.market_collector.authenticator.get_access_token_interactive()
+            return True
+        except Exception as e:
+            logger.error(f"Authentication failed: {e}")
+            return False
+    
+    def check_authentication(self) -> bool:
+        """
+        Check if current authentication is valid.
+        
+        Returns:
+            True if authenticated, False otherwise
+        """
+        return self.market_collector.authenticator.is_token_valid()
+    
+    def ensure_authentication(self) -> bool:
+        """
+        Ensure authentication is valid, prompting user if needed.
+        
+        Returns:
+            True if authentication is valid, False otherwise
+        """
+        return self.market_collector.authenticator.ensure_valid_token()
+    
     # Market Data Collection
     def collect_market_data(self, 
                           start_date: str, 
@@ -45,9 +78,6 @@ class Day2DayAPI:
             update_existing: Whether to update existing data
         """
         logger.info(f"Collecting market data from {start_date} to {end_date}")
-        
-        if not self.market_collector.authenticator.is_token_valid():
-            raise Exception("Invalid access token. Please authenticate first.")
         
         self.market_collector.collect_market_data(
             start_date=start_date,
@@ -73,22 +103,26 @@ class Day2DayAPI:
                             raw_data_file: str,
                             output_title: str,
                             target_instrument: str,
-                            target_price_type: str = "close",
+                            target_price_type: str = "high",
+                            standardize_datetime: bool = True,
                             **kwargs) -> str:
         """
-        Prepare training data for model training.
+        Prepare training data for model training with enhanced datetime standardization.
+        
+        Note: As per specifications, the target is always the HIGH price of the target instrument.
         
         Args:
             raw_data_file: Name of raw data file
             output_title: Title for output file
             target_instrument: Target instrument for prediction
-            target_price_type: Type of price to predict
+            target_price_type: Type of price to predict (NOTE: Always forced to "high")
+            standardize_datetime: Whether to standardize datetime to GMT and create complete timeline
             **kwargs: Additional preparation parameters
             
         Returns:
             Path to prepared data file
         """
-        logger.info(f"Preparing training data: {output_title}")
+        logger.info(f"Preparing training data: {output_title} (standardize_datetime={standardize_datetime})")
         
         return self.data_preparator.prepare_training_data(
             raw_data_file=raw_data_file,
@@ -130,6 +164,7 @@ class Day2DayAPI:
             Dictionary of trained models
         """
         logger.info(f"Training models for {training_data_title}_{target_instrument}")
+        logger.info(f"Models will predict HIGH price of {target_instrument} (as per specifications)")
         
         # Use recommended models if no configs provided
         if model_configs is None:

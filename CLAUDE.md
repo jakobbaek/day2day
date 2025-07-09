@@ -45,9 +45,20 @@ python setup.py install
 
 ## Common Commands
 
+### Authentication
+```bash
+day2day auth
+```
+Interactive OAuth2 authentication with Saxo Bank API.
+
+```bash
+day2day auth --check
+```
+Check current authentication status.
+
 ### Data Collection
 ```bash
-python market.py
+day2day collect --start-date 2023-01-01 --end-date 2023-12-31
 ```
 Collects Danish stock data from Saxo Bank API with 1-minute granularity.
 
@@ -78,10 +89,11 @@ Runs backtesting strategies on collected data.
 - Supports seamless updates without duplicating datetime-instrument pairs
 
 ### Data Preparation (data_prep.py)
-- Transforms raw market data into ML features
+- **Enhanced Datetime Standardization**: Converts all timestamps to GMT and creates complete 1-minute timelines
+- **Market Hours Inference**: Automatically detects market opening hours from data patterns
+- **Forward Fill Strategy**: Fills missing price data assuming prices remain unchanged during gaps
 - Supports both raw prices and percentage changes
 - Creates lagged features with configurable time horizons
-- Fills missing datetime values using forward fill strategy
 - Filters for high-quality data (>25 observations per day)
 
 ### Modeling (modelling.py)
@@ -99,12 +111,13 @@ Runs backtesting strategies on collected data.
 
 ## API Configuration
 
-The Saxo Bank API requires:
-- Client ID and Client Secret (stored in auth.py)
-- OAuth2 flow for authentication
-- Access tokens for API calls
+The Saxo Bank API now features complete OAuth2 authentication:
+- **Interactive Authentication**: `day2day auth` command for complete OAuth flow
+- **Automatic Token Management**: Handles token refresh and expiration
+- **Secure Storage**: Tokens saved to `.env` file (gitignored)
+- **Validation**: Automatic token validation before API calls
 
-**Security Note**: API credentials are currently hardcoded in `auth.py` and should be moved to environment variables or a separate config file not committed to git.
+**Setup**: Only need to configure `SAXO_CLIENT_ID`, `SAXO_CLIENT_SECRET`, and `SAXO_REDIRECT_URI` in `.env` file. Access tokens are obtained automatically.
 
 ## Data Storage
 
@@ -115,6 +128,8 @@ The Saxo Bank API requires:
 ## Target Instrument
 
 The primary target for modeling is "NOVO-B.CO" (Novo Nordisk B shares), but the system supports multiple Danish stocks from Copenhagen Stock Exchange.
+
+**Important**: As per specifications, the target prediction is always the HIGH price of the selected target instrument, regardless of the target_price_type parameter.
 
 ## Trading Strategy
 

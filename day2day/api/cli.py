@@ -14,6 +14,10 @@ def main():
     parser = argparse.ArgumentParser(description="Day2Day Trading Application")
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
     
+    # Authentication
+    auth_parser = subparsers.add_parser('auth', help='Authenticate with Saxo Bank API')
+    auth_parser.add_argument('--check', action='store_true', help='Check current authentication status')
+    
     # Market data collection
     collect_parser = subparsers.add_parser('collect', help='Collect market data')
     collect_parser.add_argument('--start-date', required=True, help='Start date (YYYY-MM-DD)')
@@ -26,9 +30,10 @@ def main():
     prepare_parser.add_argument('--raw-data-file', required=True, help='Raw data file name')
     prepare_parser.add_argument('--output-title', required=True, help='Output title')
     prepare_parser.add_argument('--target-instrument', required=True, help='Target instrument')
-    prepare_parser.add_argument('--target-price-type', default='close', help='Price type to predict')
+    prepare_parser.add_argument('--target-price-type', default='high', help='Price type to predict (NOTE: Always forced to "high")')
     prepare_parser.add_argument('--use-percentage', action='store_true', help='Use percentage features')
     prepare_parser.add_argument('--use-raw-prices', action='store_true', help='Use raw price features')
+    prepare_parser.add_argument('--no-standardize-datetime', action='store_true', help='Disable datetime standardization')
     
     # Model training
     train_parser = subparsers.add_parser('train', help='Train models')
@@ -76,7 +81,24 @@ def main():
     api = Day2DayAPI()
     
     try:
-        if args.command == 'collect':
+        if args.command == 'auth':
+            if args.check:
+                # Check authentication status
+                if api.check_authentication():
+                    print("✓ Authentication is valid")
+                else:
+                    print("✗ Authentication is invalid or expired")
+                    print("Run 'day2day auth' to authenticate")
+            else:
+                # Perform authentication
+                print("Starting Saxo Bank API authentication...")
+                if api.authenticate_saxo_bank():
+                    print("✓ Authentication completed successfully")
+                else:
+                    print("✗ Authentication failed")
+                    sys.exit(1)
+        
+        elif args.command == 'collect':
             api.collect_market_data(
                 start_date=args.start_date,
                 end_date=args.end_date,
@@ -92,9 +114,13 @@ def main():
                 target_instrument=args.target_instrument,
                 target_price_type=args.target_price_type,
                 use_percentage_features=args.use_percentage,
-                use_raw_prices=args.use_raw_prices
+                use_raw_prices=args.use_raw_prices,
+                standardize_datetime=not args.no_standardize_datetime
             )
             print(f"Training data prepared successfully: {output_path}")
+            print("✓ Target prediction: HIGH price of target instrument (as per specifications)")
+            if not args.no_standardize_datetime:
+                print("✓ Datetime standardization: GMT conversion and complete timeline creation enabled")
         
         elif args.command == 'train':
             # Create model configs
