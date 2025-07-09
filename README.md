@@ -1,4 +1,4 @@
-# issue_observatory_search 0.1
+# day2day 0.1.0
 
 ## 1. Project Structure
 
