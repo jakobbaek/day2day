@@ -1,0 +1,36 @@
+# Core data science packages with compatible versions
+numpy>=1.21.0,<1.25.0
+scipy>=1.7.3,<1.8.0
+pandas>=1.5.0,<2.0.0
+polars>=0.20.0
+
+# Machine learning packages
+scikit-learn>=1.3.0
+xgboost>=1.7.0
+joblib>=1.3.0
+
+# Visualization
+matplotlib>=3.6.0
+seaborn>=0.12.0
+
+# Web and API
+requests>=2.28.0
+requests-oauthlib>=1.3.0
+BeautifulSoup4>=4.12.0
+bs4>=0.0.1
+
+# Configuration and file handling
+python-dotenv>=1.0.0
+openpyxl>=3.1.0
+
+# Text processing (optional dependencies for some features)
+nltk>=3.8.0
+gensim>=4.3.0
+spacy>=3.6.0
+
+# Network analysis (optional)
+python-louvain>=0.16.0
+
+# Optional packages that might cause conflicts
+# numba>=0.57.1  # Commented out - install separately if needed
+# pymc3>=3.11.5  # Commented out - install separately if needed

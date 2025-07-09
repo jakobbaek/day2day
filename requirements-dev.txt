@@ -1,0 +1,21 @@
+# Development requirements with more flexible versions
+-r requirements.txt
+
+# Development tools
+pytest>=7.0.0
+pytest-cov>=4.0.0
+black>=23.0.0
+flake8>=6.0.0
+mypy>=1.0.0
+
+# Documentation
+sphinx>=5.0.0
+sphinx-rtd-theme>=1.0.0
+
+# Optional advanced packages (install with caution)
+# These packages have strict version requirements that may conflict
+# Install them separately in a dedicated environment if needed:
+# numba>=0.57.1
+# pymc3>=3.11.5
+# pystan>=2.19.0
+# theano>=1.0.0

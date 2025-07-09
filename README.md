@@ -77,6 +77,13 @@
   ### Install the package
   pip install -e .
 
+  ### Setup credentials in .env (only once)
+  SAXO_CLIENT_ID=your_client_id
+  SAXO_CLIENT_SECRET=your_client_secret
+
+  ### Authenticate (system handles everything)
+  day2day auth
+
   ### Collect market data
   day2day collect --start-date 2023-01-01 --end-date 2023-12-31
 

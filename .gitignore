@@ -175,7 +175,7 @@ cython_debug/
 keys/**/*.json
 *.csv
 *.gexf
-*.txt
+Specifications for day2day.txt
 
 # Project specific data directories
 data/
