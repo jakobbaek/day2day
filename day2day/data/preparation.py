@@ -294,15 +294,21 @@ class DataPreparator:
                     close_col = f"close_{ticker}"
                     
                     if close_col in df.columns:
-                        # Get previous day's close
+                        # Get daily close prices for this ticker, sorted by date
                         daily_close = (result_df
                             .group_by("date")
-                            .agg(pl.col(close_col).last().alias(f"prev_close_{ticker}"))
-                            .with_columns(pl.col("date") + pl.duration(days=1))
+                            .agg(pl.col(close_col).last().alias(f"daily_close_{ticker}"))
+                            .sort("date")
                         )
                         
+                        # Create previous trading day mapping
+                        # Shift the close prices by 1 position to get previous trading day's close
+                        daily_close_with_prev = daily_close.with_columns([
+                            pl.col(f"daily_close_{ticker}").shift(1).alias(f"prev_close_{ticker}")
+                        ]).select(["date", f"prev_close_{ticker}"])
+                        
                         # Join and calculate percentage
-                        result_df = result_df.join(daily_close, on="date", how="left")
+                        result_df = result_df.join(daily_close_with_prev, on="date", how="left")
                         
                         # Calculate percentage change for all columns related to this ticker
                         for value_col in target_columns:
