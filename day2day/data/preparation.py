@@ -569,6 +569,10 @@ class DataPreparator:
         """
         Prepare training data according to specifications.
         
+        IMPORTANT: Volume filtering happens BEFORE datetime standardization to ensure
+        accurate trading volume assessment. Standardization creates complete timelines
+        that would make all instruments appear to have equal volume.
+        
         Args:
             raw_data_file: Name of raw data file
             output_title: Title for output file
@@ -583,6 +587,7 @@ class DataPreparator:
             min_daily_observations: Minimum daily observations for quality filter
             volume_fraction: Fraction of most traded stocks to include (0.0 to 1.0)
                            e.g., 0.25 = top 25% most traded stocks
+            exclude_last_hours: Hours to exclude from end of each trading day to avoid next-day predictions
             
         Returns:
             Path to output file
@@ -590,24 +595,26 @@ class DataPreparator:
         logger.info(f"=== STARTING DATA PREPARATION: {output_title} ===")
         start_time = time.time()
         
-        # Step 1: Load raw data with datetime standardization
-        logger.info("Step 1/9: Loading raw data with datetime standardization...")
+        # Step 1: Load raw data WITHOUT datetime standardization first
+        logger.info("Step 1/9: Loading raw data (without standardization for volume filtering)...")
         step_start = time.time()
-        df = self.load_raw_data(raw_data_file, standardize_datetime=True)
+        df = self.load_raw_data(raw_data_file, standardize_datetime=False)
         logger.info(f"✓ Step 1 completed in {time.time() - step_start:.2f}s - Loaded {len(df)} rows, {len(df.columns)} columns")
         
-        # Step 2: Filter high-quality data (currently disabled)
-        logger.info("Step 2/9: Filtering high-quality data (currently disabled)")
-        #df = self.filter_high_quality_data(df, min_daily_observations)
-        
-        # Step 3: Filter by trading volume
+        # Step 2: Filter by trading volume BEFORE standardization (critical for accurate volume assessment)
         if volume_fraction < 1.0:
-            logger.info(f"Step 3/9: Filtering by trading volume (top {volume_fraction*100:.1f}%)...")
+            logger.info(f"Step 2/9: Filtering by trading volume (top {volume_fraction*100:.1f}%) - BEFORE standardization...")
             step_start = time.time()
             df = self.filter_by_trading_volume(df, volume_fraction)
-            logger.info(f"✓ Step 3 completed in {time.time() - step_start:.2f}s - Reduced to {len(df)} rows")
+            logger.info(f"✓ Step 2 completed in {time.time() - step_start:.2f}s - Reduced to {len(df)} rows")
         else:
-            logger.info("Step 3/9: Skipping trading volume filter (volume_fraction=1.0)")
+            logger.info("Step 2/9: Skipping trading volume filter (volume_fraction=1.0)")
+        
+        # Step 3: NOW standardize datetime with filtered instruments
+        logger.info("Step 3/9: Standardizing datetime and creating complete timeline...")
+        step_start = time.time()
+        df = self.datetime_standardizer.standardize_all_instruments(df)
+        logger.info(f"✓ Step 3 completed in {time.time() - step_start:.2f}s - Standardized {len(df)} rows, {len(df.columns)} columns")
         
         # Step 4: Filter selected instruments
         if selected_instruments:
