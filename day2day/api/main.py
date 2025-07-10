@@ -105,6 +105,7 @@ class Day2DayAPI:
                             target_instrument: str,
                             target_price_type: str = "high",
                             standardize_datetime: bool = True,
+                            exclude_last_hours: float = 2.0,
                             **kwargs) -> str:
         """
         Prepare training data for model training with enhanced datetime standardization.
@@ -117,6 +118,7 @@ class Day2DayAPI:
             target_instrument: Target instrument for prediction
             target_price_type: Type of price to predict (NOTE: Always forced to "high")
             standardize_datetime: Whether to standardize datetime to GMT and create complete timeline
+            exclude_last_hours: Hours to exclude from end of each trading day to avoid next-day predictions
             **kwargs: Additional preparation parameters
             
         Returns:
@@ -129,6 +131,7 @@ class Day2DayAPI:
             output_title=output_title,
             target_instrument=target_instrument,
             target_price_type=target_price_type,
+            exclude_last_hours=exclude_last_hours,
             **kwargs
         )
     

@@ -230,20 +230,33 @@ class DateTimeStandardizer:
             .sort("datetime")
         )
         
-        # Forward fill price columns
+        # Forward fill price columns ONLY within the same trading day
+        # This ensures nulls remain at market open (important for day trading)
         price_columns = ["high", "low", "open", "close"]
         existing_price_cols = [col for col in price_columns if col in complete_data.columns]
         
         if existing_price_cols:
+            # Add date column for grouping
+            complete_data = complete_data.with_columns(
+                pl.col("datetime").dt.date().alias("trading_date")
+            )
+            
+            # Forward fill within each trading day only
             complete_data = complete_data.with_columns([
-                pl.col(col).fill_null(strategy="forward") for col in existing_price_cols
+                pl.col(col).fill_null(strategy="forward").over("trading_date") 
+                for col in existing_price_cols
             ])
+            
+            # Backward fill within each trading day only (for any remaining nulls)
+            complete_data = complete_data.with_columns([
+                pl.col(col).fill_null(strategy="backward").over("trading_date") 
+                for col in existing_price_cols
+            ])
+            
+            # Remove temporary date column
+            complete_data = complete_data.drop("trading_date")
         
-        # Fill any remaining nulls with backward fill
-        if existing_price_cols:
-            complete_data = complete_data.with_columns([
-                pl.col(col).fill_null(strategy="backward") for col in existing_price_cols
-            ])
+        logger.debug(f"Timeline created with proper day boundaries for {ticker}")
         
         return complete_data
     

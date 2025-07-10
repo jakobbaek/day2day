@@ -461,14 +461,19 @@ class DataPreparator:
     
     def create_target_variable(self, df: pl.DataFrame, 
                              target_column: str,
-                             horizon: int = None) -> pl.DataFrame:
+                             horizon: int = None,
+                             exclude_last_hours: float = 2.0) -> pl.DataFrame:
         """
         Create target variable for prediction.
+        
+        For day trading, excludes the last X hours of trading to avoid predicting 
+        into the next trading day.
         
         Args:
             df: Input DataFrame
             target_column: Column name for target variable
-            horizon: Prediction horizon in time steps
+            horizon: Prediction horizon in time steps (minutes)
+            exclude_last_hours: Hours to exclude from end of each trading day
             
         Returns:
             DataFrame with target variable
@@ -478,10 +483,56 @@ class DataPreparator:
         
         result_df = df.clone()
         
-        # Create future target
+        # Add time and date columns for filtering
+        result_df = result_df.with_columns([
+            pl.col("datetime").dt.time().alias("time_of_day"),
+            pl.col("datetime").dt.date().alias("trading_date")
+        ])
+        
+        # Calculate cutoff time for each day (exclude last X hours)
+        # Get market hours to calculate cutoff
+        try:
+            market_open, market_close = self.datetime_standardizer.infer_market_hours(df)
+            
+            # Calculate cutoff time (X hours before market close)
+            close_hour = market_close.hour
+            close_minute = market_close.minute
+            cutoff_minutes = close_minute - int(exclude_last_hours * 60)
+            cutoff_hour = close_hour
+            
+            # Handle minute overflow
+            while cutoff_minutes < 0:
+                cutoff_minutes += 60
+                cutoff_hour -= 1
+            
+            from datetime import time
+            cutoff_time = time(cutoff_hour, cutoff_minutes)
+            
+            logger.info(f"Day trading target cutoff: Excluding last {exclude_last_hours}h of trading")
+            logger.info(f"Market close: {market_close}, Cutoff time: {cutoff_time}")
+            
+        except Exception:
+            # Fallback to conservative estimate
+            from datetime import time
+            cutoff_time = time(14, 0)  # 2 PM if assuming 4 PM close
+            logger.warning(f"Using fallback cutoff time: {cutoff_time}")
+        
+        # Create future target with day trading constraints
         result_df = result_df.with_columns(
             pl.col(target_column).shift(-horizon).alias("target")
         )
+        
+        # Set target to null for predictions that would extend beyond cutoff time
+        # This prevents predicting into the next trading day
+        result_df = result_df.with_columns(
+            pl.when(pl.col("time_of_day") > cutoff_time)
+            .then(None)
+            .otherwise(pl.col("target"))
+            .alias("target")
+        )
+        
+        # Remove temporary columns
+        result_df = result_df.drop(["time_of_day", "trading_date"])
         
         return result_df
     
@@ -513,7 +564,8 @@ class DataPreparator:
                             add_historical_means: bool = True,
                             max_lag: int = 12,
                             min_daily_observations: int = 25,
-                            volume_fraction: float = 1.0) -> str:
+                            volume_fraction: float = 1.0,
+                            exclude_last_hours: float = 2.0) -> str:
         """
         Prepare training data according to specifications.
         
@@ -642,7 +694,7 @@ class DataPreparator:
             raise ValueError(f"Target column {target_column} not found in data")
         
         logger.info(f"Creating target variable using HIGH price: {target_column}")
-        df = self.create_target_variable(df, target_column)
+        df = self.create_target_variable(df, target_column, exclude_last_hours=exclude_last_hours)
         
         # Remove rows with missing target
         initial_rows = len(df)
