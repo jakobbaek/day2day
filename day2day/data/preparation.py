@@ -368,54 +368,42 @@ class DataPreparator:
             logger.info(f"Processing {period_name} period ({days} days lookback)")
             period_start = time.time()
             
-            # Step 1: Create daily aggregates for each instrument
-            daily_data = []
-            features_added = 0
+            # Step 1: Create daily aggregates for ALL instruments at once
+            logger.info(f"Calculating daily means for all target columns")
             
-            # Get unique instruments from target columns
-            instruments = set()
+            # Prepare aggregation expressions for all target columns
+            agg_exprs = []
             for col in target_columns:
-                if col.startswith("open_"):
-                    instrument = col.replace("open_", "")
-                    instruments.add(instrument)
+                if col != "datetime":
+                    agg_exprs.append(pl.col(col).mean().alias(f"daily_{col}"))
             
-            logger.info(f"Calculating daily means for {len(instruments)} instruments")
+            # Calculate daily means for all instruments in one operation
+            daily_aggregates = (result_df
+                .group_by("date")
+                .agg(agg_exprs)
+                .sort("date")
+            )
             
-            for instrument in instruments:
-                open_col = f"open_{instrument}"
-                if open_col in target_columns:
-                    # Calculate daily mean for this instrument
-                    daily_means = (result_df
-                        .group_by("date")
-                        .agg([
-                            pl.col(open_col).mean().alias(f"daily_mean_{instrument}"),
-                            pl.col("datetime").min().alias("datetime")  # Keep a datetime for sorting
-                        ])
-                        .sort("date")
-                        .with_columns([
-                            # Calculate rolling mean over the specified number of days
-                            pl.col(f"daily_mean_{instrument}")
-                            .rolling_mean(days)
-                            .alias(f"{open_col}_mean_{period_name}")
-                        ])
-                        .select(["date", f"{open_col}_mean_{period_name}"])
+            # Step 2: Calculate rolling means for all columns
+            rolling_exprs = []
+            for col in target_columns:
+                if col != "datetime":
+                    daily_col = f"daily_{col}"
+                    feature_name = f"{col}_mean_{period_name}"
+                    rolling_exprs.append(
+                        pl.col(daily_col).rolling_mean(days).alias(feature_name)
                     )
-                    
-                    daily_data.append(daily_means)
-                    features_added += 1
             
-            # Step 2: Join all daily means together
-            if daily_data:
-                # Start with the first instrument's data
-                daily_features = daily_data[0]
-                
-                # Join all other instruments' daily features
-                for daily_df in daily_data[1:]:
-                    daily_features = daily_features.join(daily_df, on="date", how="outer")
-                
-                # Step 3: Join back to the main dataframe (broadcasts daily values to all minutes)
-                result_df = result_df.join(daily_features, on="date", how="left")
+            daily_features = daily_aggregates.with_columns(rolling_exprs)
             
+            # Select only the date and the rolling mean features
+            feature_cols = ["date"] + [f"{col}_mean_{period_name}" for col in target_columns if col != "datetime"]
+            daily_features = daily_features.select(feature_cols)
+            
+            # Step 3: Join back to the main dataframe
+            result_df = result_df.join(daily_features, on="date", how="left")
+            
+            features_added = len([col for col in target_columns if col != "datetime"])
             logger.info(f"✓ {period_name} period completed in {time.time() - period_start:.2f}s - Added {features_added} features")
         
         # Remove temporary date column
