@@ -44,7 +44,7 @@ class ModelTrainer:
             raise ValueError("Target column not found in training data")
         
         # Exclude non-feature columns
-        exclude_cols = ['datetime', 'target']
+        exclude_cols = ['datetime', 'target', 'trading_eligible']
         feature_cols = [col for col in df.columns if col not in exclude_cols]
         
         X = df[feature_cols]
@@ -213,6 +213,15 @@ class ModelTrainer:
         test_file = suite_dir / "test_data.csv"
         test_df = X_test.copy()
         test_df['target'] = y_test
+        
+        # Include trading_eligible flag if it exists in the original data
+        data_file = f"{training_data_title}.csv"
+        original_df = pd.read_csv(settings.get_processed_data_file(data_file))
+        if 'trading_eligible' in original_df.columns:
+            # Get the trading_eligible values for the test set indices
+            test_df['trading_eligible'] = original_df.loc[X_test.index, 'trading_eligible']
+            logger.info("Included trading_eligible flag in test data for day trading evaluation")
+        
         test_df.to_csv(test_file, index=False)
         
         # Save metadata

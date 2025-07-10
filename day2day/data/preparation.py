@@ -466,17 +466,17 @@ class DataPreparator:
         """
         Create target variable for prediction.
         
-        For day trading, excludes the last X hours of trading to avoid predicting 
-        into the next trading day.
+        For day trading, marks predictions in the last X hours as not suitable for trading
+        but preserves them for model evaluation purposes.
         
         Args:
             df: Input DataFrame
             target_column: Column name for target variable
             horizon: Prediction horizon in time steps (minutes)
-            exclude_last_hours: Hours to exclude from end of each trading day
+            exclude_last_hours: Hours to exclude from trading (but keep for evaluation)
             
         Returns:
-            DataFrame with target variable
+            DataFrame with target variable and trading_eligible flag
         """
         if horizon is None:
             horizon = self.prediction_horizon
@@ -517,19 +517,29 @@ class DataPreparator:
             cutoff_time = time(14, 0)  # 2 PM if assuming 4 PM close
             logger.warning(f"Using fallback cutoff time: {cutoff_time}")
         
-        # Create future target with day trading constraints
+        # Create future target (keep all predictions for evaluation)
         result_df = result_df.with_columns(
             pl.col(target_column).shift(-horizon).alias("target")
         )
         
-        # Set target to null for predictions that would extend beyond cutoff time
-        # This prevents predicting into the next trading day
+        # Add trading eligibility flag instead of removing data
+        # This allows evaluation while preventing trading on late-day predictions
         result_df = result_df.with_columns(
-            pl.when(pl.col("time_of_day") > cutoff_time)
-            .then(None)
-            .otherwise(pl.col("target"))
-            .alias("target")
+            pl.when(pl.col("time_of_day") <= cutoff_time)
+            .then(True)
+            .otherwise(False)
+            .alias("trading_eligible")
         )
+        
+        # Log the split for transparency
+        total_predictions = len(result_df.filter(pl.col("target").is_not_null()))
+        trading_eligible = len(result_df.filter((pl.col("target").is_not_null()) & (pl.col("trading_eligible") == True)))
+        evaluation_only = total_predictions - trading_eligible
+        
+        logger.info(f"Day trading constraints applied:")
+        logger.info(f"  Total valid predictions: {total_predictions}")
+        logger.info(f"  Trading eligible: {trading_eligible}")
+        logger.info(f"  Evaluation only (late day): {evaluation_only}")
         
         # Remove temporary columns
         result_df = result_df.drop(["time_of_day", "trading_date"])
@@ -703,11 +713,18 @@ class DataPreparator:
         logger.info(f"Creating target variable using HIGH price: {target_column}")
         df = self.create_target_variable(df, target_column, exclude_last_hours=exclude_last_hours)
         
-        # Remove rows with missing target
+        # Remove rows with missing target (due to prediction horizon at end of dataset)
+        # But keep all rows with trading_eligible flag for proper evaluation
         initial_rows = len(df)
         df = df.filter(pl.col("target").is_not_null())
         final_rows = len(df)
-        logger.info(f"Removed {initial_rows - final_rows} rows with missing target values")
+        
+        # Count trading vs evaluation rows
+        trading_rows = len(df.filter(pl.col("trading_eligible") == True))
+        evaluation_rows = len(df.filter(pl.col("trading_eligible") == False))
+        
+        logger.info(f"Removed {initial_rows - final_rows} rows with missing target values (end of dataset)")
+        logger.info(f"Final dataset split: {trading_rows} trading-eligible, {evaluation_rows} evaluation-only")
         
         # Save prepared data
         output_file = f"{output_title}.csv"
