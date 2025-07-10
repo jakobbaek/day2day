@@ -593,7 +593,21 @@ class DataPreparator:
         # Create target variable - always use high price as per specifications
         target_price_type = "high"  # Force high price as target
         target_column = f"{target_price_type}_{target_instrument}"
+        
+        # Debug: Show available columns to help with troubleshooting
+        available_high_cols = [col for col in df.columns if col.startswith("high_")]
+        logger.info(f"Available HIGH columns: {available_high_cols[:10]}{'...' if len(available_high_cols) > 10 else ''}")
+        logger.info(f"Looking for target column: {target_column}")
+        
         if target_column not in df.columns:
+            # Try to find similar column names
+            similar_cols = [col for col in df.columns if target_instrument in col and "high" in col]
+            if similar_cols:
+                logger.error(f"Target column '{target_column}' not found, but found similar: {similar_cols}")
+                logger.error("Possible ticker format mismatch. Check if ticker in data matches target_instrument parameter.")
+            else:
+                logger.error(f"No columns found containing '{target_instrument}' and 'high'")
+                logger.error(f"Available ticker formats in data: {[col.split('_')[-1] for col in available_high_cols[:5]]}")
             raise ValueError(f"Target column {target_column} not found in data")
         
         logger.info(f"Creating target variable using HIGH price: {target_column}")
