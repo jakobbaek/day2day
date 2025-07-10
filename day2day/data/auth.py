@@ -372,12 +372,14 @@ class SaxoAuthenticator:
     def ensure_valid_token(self) -> bool:
         """
         Ensure we have a valid access token, refreshing or re-authenticating if needed.
+        Uses proactive refresh logic to maintain tokens before they expire.
         
         Returns:
             True if valid token is available, False otherwise
         """
-        # First check if current token is valid
-        if self.is_token_valid():
+        # Check if token needs refresh (proactive approach)
+        if not self.needs_refresh():
+            logger.debug("Token is valid and doesn't need refresh")
             return True
         
         # Try to refresh token

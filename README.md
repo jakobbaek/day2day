@@ -78,6 +78,7 @@
   pip install -e .
 
   python3 -m venv day2day_env
+  
   source day2day_env/bin/activate
 
   ### Setup credentials in .env (only once)
