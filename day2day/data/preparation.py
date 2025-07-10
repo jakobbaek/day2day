@@ -549,15 +549,48 @@ class DataPreparator:
         else:
             logger.info("Step 4/9: Skipping instrument selection (using all instruments)")
         
-        # Step 5: Convert to wide format
-        logger.info("Step 5/9: Converting to wide format...")
+        # Step 5: Convert to wide format and handle price feature selection
+        logger.info("Step 5/9: Converting to wide format and handling price features...")
         step_start = time.time()
+        
+        # Determine which price features to include based on user settings
+        if not use_percentage_features and not use_raw_prices:
+            # Default: use only raw prices
+            include_raw = True
+            include_percentage = False
+            logger.info("Using default: raw prices only (neither use_percentage nor use_raw_prices specified)")
+        elif use_percentage_features and not use_raw_prices:
+            # Use only percentage features
+            include_raw = False
+            include_percentage = True
+            logger.info("Using percentage features only")
+        elif not use_percentage_features and use_raw_prices:
+            # Use only raw prices
+            include_raw = True
+            include_percentage = False
+            logger.info("Using raw prices only")
+        else:  # both use_percentage_features and use_raw_prices are True
+            # Use both
+            include_raw = True
+            include_percentage = True
+            logger.info("Using both raw prices and percentage features")
+        
+        # Always convert to wide format first
         value_columns = ["high", "low", "open", "close"]
         df = self.create_wide_format(df, value_columns)
-        logger.info(f"✓ Step 5 completed in {time.time() - step_start:.2f}s - Wide format: {len(df)} rows, {len(df.columns)} columns")
+        logger.info(f"Wide format conversion: {len(df)} rows, {len(df.columns)} columns")
+        
+        # If we don't want raw prices, remove them after creating wide format
+        if not include_raw:
+            # Remove raw price columns, keep only datetime
+            price_columns_to_remove = [col for col in df.columns if col != "datetime" and any(col.startswith(f"{price}_") for price in value_columns)]
+            df = df.select([col for col in df.columns if col not in price_columns_to_remove])
+            logger.info(f"Removed raw price columns: {len(price_columns_to_remove)} columns removed")
+        
+        logger.info(f"✓ Step 5 completed in {time.time() - step_start:.2f}s - Final: {len(df)} rows, {len(df.columns)} columns")
         
         # Step 6: Add percentage features
-        if use_percentage_features:
+        if include_percentage:
             logger.info("Step 6/9: Adding percentage features...")
             step_start = time.time()
             df = self.add_percentage_features(df)
