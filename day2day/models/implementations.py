@@ -311,6 +311,12 @@ MODEL_REGISTRY = {
     'mlp': MLPModel
 }
 
+# Models that can handle null values natively (important for day trading)
+NULL_COMPATIBLE_MODELS = {
+    'xgboost': XGBoostModel,
+    'random_forest': RandomForestModel
+}
+
 
 def get_available_models() -> Dict[str, type]:
     """Get dictionary of available model types."""
@@ -322,6 +328,31 @@ def get_available_models() -> Dict[str, type]:
             model_class(name="test")
             available[name] = model_class
         except ImportError:
+            continue
+    
+    return available
+
+
+def get_null_compatible_models() -> Dict[str, type]:
+    """
+    Get dictionary of models that can handle null values natively.
+    
+    This is important for day trading where lagged features may have null values
+    at market open (first few minutes have no recent history from previous day).
+    
+    Returns:
+        Dictionary of null-compatible model types
+    """
+    available = {}
+    
+    for name, model_class in NULL_COMPATIBLE_MODELS.items():
+        try:
+            # Try to instantiate to check if dependencies are available
+            model_class(name="test")
+            available[name] = model_class
+            logger.debug(f"Null-compatible model available: {name}")
+        except ImportError:
+            logger.warning(f"Null-compatible model {name} not available due to missing dependencies")
             continue
     
     return available

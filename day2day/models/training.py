@@ -7,7 +7,7 @@ import json
 import logging
 from pathlib import Path
 from .base import BaseModel, ModelEnsemble
-from .implementations import create_model, get_available_models
+from .implementations import create_model, get_available_models, get_null_compatible_models
 from ..config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -21,12 +21,13 @@ class ModelTrainer:
         self.trained_models: Dict[str, BaseModel] = {}
         self.model_configs: Dict[str, Dict[str, Any]] = {}
         
-    def load_training_data(self, data_file: str) -> Tuple[pd.DataFrame, pd.Series]:
+    def load_training_data(self, data_file: str, preserve_nulls: bool = True) -> Tuple[pd.DataFrame, pd.Series]:
         """
         Load training data from processed data file.
         
         Args:
             data_file: Name of the processed data file
+            preserve_nulls: Whether to preserve null values for day trading models
             
         Returns:
             Tuple of (features, target)
@@ -49,12 +50,21 @@ class ModelTrainer:
         X = df[feature_cols]
         y = df['target']
         
-        # Remove rows with missing values
-        mask = ~(X.isnull().any(axis=1) | y.isnull())
-        X = X[mask]
-        y = y[mask]
-        
-        logger.info(f"Loaded training data: {len(X)} samples, {len(feature_cols)} features")
+        if preserve_nulls:
+            # Keep nulls for day trading models (only remove rows where target is null)
+            mask = ~y.isnull()
+            X = X[mask]
+            y = y[mask]
+            
+            null_count = X.isnull().sum().sum()
+            logger.info(f"Loaded training data (preserving nulls): {len(X)} samples, {len(feature_cols)} features")
+            logger.info(f"Null values preserved: {null_count} nulls in feature matrix (important for day trading)")
+        else:
+            # Remove rows with missing values (for traditional models)
+            mask = ~(X.isnull().any(axis=1) | y.isnull())
+            X = X[mask]
+            y = y[mask]
+            logger.info(f"Loaded training data (nulls removed): {len(X)} samples, {len(feature_cols)} features")
         
         return X, y
     
@@ -261,31 +271,84 @@ class ModelTrainer:
         
         return models
     
-    def get_model_recommendations(self, feature_count: int, sample_count: int) -> List[Dict[str, Any]]:
+    def get_model_recommendations(self, feature_count: int, sample_count: int, 
+                                 day_trading_mode: bool = True) -> List[Dict[str, Any]]:
         """
         Get recommended model configurations based on data characteristics.
+        
+        For day trading applications, only recommends models that can handle null values
+        since lagged features will have nulls at market open.
         
         Args:
             feature_count: Number of features
             sample_count: Number of samples
+            day_trading_mode: Whether to use only null-compatible models for day trading
             
         Returns:
             List of recommended model configurations
         """
         recommendations = []
         
-        # Always recommend XGBoost
-        recommendations.append({
-            'name': 'xgboost_default',
-            'type': 'xgboost',
-            'params': {
-                'n_estimators': 100,
-                'max_depth': 6,
-                'learning_rate': 0.1
-            }
-        })
+        if day_trading_mode:
+            logger.info("Day trading mode: Using only null-compatible models")
+            logger.info("This is important because lagged features have nulls at market open")
+            
+            # Get available null-compatible models
+            null_safe_models = get_null_compatible_models()
+            
+            if 'xgboost' in null_safe_models:
+                # Always recommend XGBoost (excellent with nulls)
+                recommendations.append({
+                    'name': 'xgboost_default',
+                    'type': 'xgboost',
+                    'params': {
+                        'n_estimators': 100,
+                        'max_depth': 6,
+                        'learning_rate': 0.1
+                    }
+                })
+                
+                # Add a more conservative XGBoost variant
+                recommendations.append({
+                    'name': 'xgboost_conservative',
+                    'type': 'xgboost',
+                    'params': {
+                        'n_estimators': 200,
+                        'max_depth': 4,
+                        'learning_rate': 0.05
+                    }
+                })
+            
+            if 'random_forest' in null_safe_models:
+                # Recommend Random Forest (also handles nulls well)
+                recommendations.append({
+                    'name': 'random_forest_default',
+                    'type': 'random_forest',
+                    'params': {
+                        'n_estimators': 100,
+                        'max_depth': 10
+                    }
+                })
+            
+            if not recommendations:
+                logger.warning("No null-compatible models available! Install XGBoost or scikit-learn")
+                
+        else:
+            # Traditional mode - all models available
+            logger.info("Traditional mode: All models available (nulls will be removed)")
+            
+            # Always recommend XGBoost
+            recommendations.append({
+                'name': 'xgboost_default',
+                'type': 'xgboost',
+                'params': {
+                    'n_estimators': 100,
+                    'max_depth': 6,
+                    'learning_rate': 0.1
+                }
+            })
         
-        # For larger datasets, recommend more complex models
+        # For larger datasets, recommend more complex configurations
         if sample_count > 10000:
             recommendations.append({
                 'name': 'xgboost_large',

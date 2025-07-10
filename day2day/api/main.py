@@ -168,12 +168,12 @@ class Day2DayAPI:
         
         # Use recommended models if no configs provided
         if model_configs is None:
-            # Load data to get recommendations
+            # Load data to get recommendations (preserve nulls for day trading)
             data_file = f"{training_data_title}.csv"
-            X, y = self.model_trainer.load_training_data(data_file)
+            X, y = self.model_trainer.load_training_data(data_file, preserve_nulls=True)
             
             recommendations = self.model_trainer.get_model_recommendations(
-                len(X.columns), len(X)
+                len(X.columns), len(X), day_trading_mode=True
             )
             
             model_configs = {rec['name']: {'type': rec['type'], 'params': rec['params']} 

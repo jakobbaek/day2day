@@ -440,6 +440,9 @@ class DataPreparator:
         result_df = df.clone()
         lags = [1, 5, 12] if max_lag >= 12 else [1, min(5, max_lag)]
         
+        logger.info(f"Creating lagged features: {lags} (nulls will occur at market open for day trading)")
+        
+        total_lag_features = 0
         for lag in lags:
             if lag <= max_lag:
                 for col in target_columns:
@@ -448,6 +451,11 @@ class DataPreparator:
                         result_df = result_df.with_columns(
                             pl.col(col).shift(lag).alias(lag_col)
                         )
+                        total_lag_features += 1
+        
+        logger.info(f"Created {total_lag_features} lagged features")
+        logger.info(f"Day trading note: First {max(lags)} minutes after market open will have some null lag features")
+        logger.info("This is expected and models like XGBoost/RandomForest can handle these nulls")
         
         return result_df
     
