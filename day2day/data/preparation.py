@@ -336,35 +336,90 @@ class DataPreparator:
         
         Args:
             df: Input DataFrame
-            target_columns: Columns to calculate historical means for
-            periods: Dictionary of period names to number of days
+            target_columns: Columns to calculate historical means for (defaults to Open prices only)
+            periods: Dictionary of period names to number of days (defaults to 3m and 10d only)
             
         Returns:
             DataFrame with historical features
         """
         if target_columns is None:
-            target_columns = [col for col in df.columns if col != "datetime"]
+            # Default to only Open prices for efficiency
+            target_columns = [col for col in df.columns if col.startswith("open_") and col != "datetime"]
+            logger.info(f"Using default target columns (Open prices only): {len(target_columns)} columns")
         
         if periods is None:
             periods = {
-                "2y": 730,
-                "1y": 365,
                 "3m": 90,
-                "10d": 10,
-                "5d": 5
+                "10d": 10
             }
+            logger.info(f"Using default periods (optimized): {list(periods.keys())}")
         
         result_df = df.clone()
         
+        logger.info(f"Adding historical features for {len(target_columns)} columns across {len(periods)} periods")
+        logger.info("Optimizing by calculating daily means first, then joining back to minute-level data")
+        
+        # Add date column for grouping
+        result_df = result_df.with_columns(
+            pl.col("datetime").dt.date().alias("date")
+        )
+        
         for period_name, days in periods.items():
-            window_size = days * 288  # Approximate 5-minute intervals per day
+            logger.info(f"Processing {period_name} period ({days} days lookback)")
+            period_start = time.time()
             
+            # Step 1: Create daily aggregates for each instrument
+            daily_data = []
+            features_added = 0
+            
+            # Get unique instruments from target columns
+            instruments = set()
             for col in target_columns:
-                if col != "datetime":
-                    feature_name = f"{col}_mean_{period_name}"
-                    result_df = result_df.with_columns(
-                        pl.col(col).rolling_mean(window_size).alias(feature_name)
+                if col.startswith("open_"):
+                    instrument = col.replace("open_", "")
+                    instruments.add(instrument)
+            
+            logger.info(f"Calculating daily means for {len(instruments)} instruments")
+            
+            for instrument in instruments:
+                open_col = f"open_{instrument}"
+                if open_col in target_columns:
+                    # Calculate daily mean for this instrument
+                    daily_means = (result_df
+                        .group_by("date")
+                        .agg([
+                            pl.col(open_col).mean().alias(f"daily_mean_{instrument}"),
+                            pl.col("datetime").min().alias("datetime")  # Keep a datetime for sorting
+                        ])
+                        .sort("date")
+                        .with_columns([
+                            # Calculate rolling mean over the specified number of days
+                            pl.col(f"daily_mean_{instrument}")
+                            .rolling_mean(days)
+                            .alias(f"{open_col}_mean_{period_name}")
+                        ])
+                        .select(["date", f"{open_col}_mean_{period_name}"])
                     )
+                    
+                    daily_data.append(daily_means)
+                    features_added += 1
+            
+            # Step 2: Join all daily means together
+            if daily_data:
+                # Start with the first instrument's data
+                daily_features = daily_data[0]
+                
+                # Join all other instruments' daily features
+                for daily_df in daily_data[1:]:
+                    daily_features = daily_features.join(daily_df, on="date", how="outer")
+                
+                # Step 3: Join back to the main dataframe (broadcasts daily values to all minutes)
+                result_df = result_df.join(daily_features, on="date", how="left")
+            
+            logger.info(f"✓ {period_name} period completed in {time.time() - period_start:.2f}s - Added {features_added} features")
+        
+        # Remove temporary date column
+        result_df = result_df.drop("date")
         
         return result_df
     
