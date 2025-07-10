@@ -491,8 +491,7 @@ class DataPreparator:
                             output_title: str,
                             target_instrument: str,
                             target_price_type: str = "high",
-                            use_percentage_features: bool = True,
-                            use_raw_prices: bool = True,
+                            use_percentage_features: bool = False,
                             selected_instruments: List[str] = None,
                             add_historical_means: bool = True,
                             max_lag: int = 12,
@@ -506,8 +505,9 @@ class DataPreparator:
             output_title: Title for output file
             target_instrument: Target instrument for prediction
             target_price_type: Type of price to predict (NOTE: Always forced to "high" as per specifications)
-            use_percentage_features: Whether to add percentage features
-            use_raw_prices: Whether to include raw price features
+            use_percentage_features: If True, use percentage changes instead of raw prices
+                                   If False (default), use raw price values
+                                   Note: Raw and percentage features are mutually exclusive
             selected_instruments: List of instruments to include (None for all)
             add_historical_means: Whether to add historical mean features
             max_lag: Maximum lag for lagged features
@@ -549,54 +549,35 @@ class DataPreparator:
         else:
             logger.info("Step 4/9: Skipping instrument selection (using all instruments)")
         
-        # Step 5: Convert to wide format and handle price feature selection
-        logger.info("Step 5/9: Converting to wide format and handling price features...")
+        # Step 5: Convert to wide format
+        logger.info("Step 5/9: Converting to wide format...")
         step_start = time.time()
-        
-        # Determine which price features to include based on user settings
-        if not use_percentage_features and not use_raw_prices:
-            # Default: use only raw prices
-            include_raw = True
-            include_percentage = False
-            logger.info("Using default: raw prices only (neither use_percentage nor use_raw_prices specified)")
-        elif use_percentage_features and not use_raw_prices:
-            # Use only percentage features
-            include_raw = False
-            include_percentage = True
-            logger.info("Using percentage features only")
-        elif not use_percentage_features and use_raw_prices:
-            # Use only raw prices
-            include_raw = True
-            include_percentage = False
-            logger.info("Using raw prices only")
-        else:  # both use_percentage_features and use_raw_prices are True
-            # Use both
-            include_raw = True
-            include_percentage = True
-            logger.info("Using both raw prices and percentage features")
-        
-        # Always convert to wide format first
         value_columns = ["high", "low", "open", "close"]
         df = self.create_wide_format(df, value_columns)
-        logger.info(f"Wide format conversion: {len(df)} rows, {len(df.columns)} columns")
+        logger.info(f"✓ Step 5 completed in {time.time() - step_start:.2f}s - Wide format: {len(df)} rows, {len(df.columns)} columns")
         
-        # If we don't want raw prices, remove them after creating wide format
-        if not include_raw:
-            # Remove raw price columns, keep only datetime
-            price_columns_to_remove = [col for col in df.columns if col != "datetime" and any(col.startswith(f"{price}_") for price in value_columns)]
-            df = df.select([col for col in df.columns if col not in price_columns_to_remove])
-            logger.info(f"Removed raw price columns: {len(price_columns_to_remove)} columns removed")
-        
-        logger.info(f"✓ Step 5 completed in {time.time() - step_start:.2f}s - Final: {len(df)} rows, {len(df.columns)} columns")
-        
-        # Step 6: Add percentage features
-        if include_percentage:
-            logger.info("Step 6/9: Adding percentage features...")
+        # Step 6: Handle price feature type selection (raw vs percentage)
+        if use_percentage_features:
+            logger.info("Step 6/9: Converting raw prices to percentage features...")
             step_start = time.time()
+            
+            # Calculate percentage features (this adds _pct columns)
             df = self.add_percentage_features(df)
-            logger.info(f"✓ Step 6 completed in {time.time() - step_start:.2f}s - Added percentage features: {len(df.columns)} columns")
+            
+            # Replace raw price columns with percentage columns (same column names)
+            price_columns = [col for col in df.columns if any(col.startswith(f"{price}_") for price in value_columns)]
+            
+            for col in price_columns:
+                pct_col = f"{col}_pct"
+                if pct_col in df.columns:
+                    # Replace raw price column with percentage values, keeping same column name
+                    df = df.drop(col).rename({pct_col: col})
+            
+            logger.info(f"✓ Step 6 completed in {time.time() - step_start:.2f}s - Converted to percentage features: {len(df.columns)} columns")
+            logger.info("Price columns now contain percentage changes (same column names)")
         else:
-            logger.info("Step 6/9: Skipping percentage features")
+            logger.info("Step 6/9: Using raw prices (default)")
+            logger.info("Price columns contain raw price values")
         
         # Step 7: Add historical features
         if add_historical_means:

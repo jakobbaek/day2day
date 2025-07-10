@@ -31,8 +31,7 @@ def main():
     prepare_parser.add_argument('--output-title', required=True, help='Output title')
     prepare_parser.add_argument('--target-instrument', required=True, help='Target instrument')
     prepare_parser.add_argument('--target-price-type', default='high', help='Price type to predict (NOTE: Always forced to "high")')
-    prepare_parser.add_argument('--use-percentage', action='store_true', help='Use percentage features')
-    prepare_parser.add_argument('--use-raw-prices', action='store_true', help='Use raw price features')
+    prepare_parser.add_argument('--use-percentage', action='store_true', help='Use percentage features instead of raw prices (mutually exclusive)')
     prepare_parser.add_argument('--no-standardize-datetime', action='store_true', help='Disable datetime standardization')
     prepare_parser.add_argument('--volume-fraction', type=float, default=1.0, help='Fraction of most traded stocks to include (0.0-1.0, e.g., 0.25 for top 25%)')
     
@@ -115,7 +114,6 @@ def main():
                 target_instrument=args.target_instrument,
                 target_price_type=args.target_price_type,
                 use_percentage_features=args.use_percentage,
-                use_raw_prices=args.use_raw_prices,
                 standardize_datetime=not args.no_standardize_datetime,
                 volume_fraction=args.volume_fraction
             )
@@ -125,6 +123,10 @@ def main():
                 print("✓ Datetime standardization: GMT conversion and complete timeline creation enabled")
             if args.volume_fraction < 1.0:
                 print(f"✓ Trading volume filter: Top {args.volume_fraction*100:.1f}% most traded stocks selected")
+            if args.use_percentage:
+                print("✓ Price features: Using percentage changes (same column names)")
+            else:
+                print("✓ Price features: Using raw price values (default)")
         
         elif args.command == 'train':
             # Create model configs
