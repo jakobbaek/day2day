@@ -425,14 +425,17 @@ class DataPreparator:
         
         Args:
             df: Input DataFrame
-            target_columns: Columns to create lags for
+            target_columns: Columns to create lags for (excludes historical means by default)
             max_lag: Maximum lag to create
             
         Returns:
             DataFrame with lagged features
         """
         if target_columns is None:
-            target_columns = [col for col in df.columns if col != "datetime"]
+            # Exclude historical mean features from lagging (they're already historical)
+            target_columns = [col for col in df.columns 
+                            if col != "datetime" and "_mean_" not in col]
+            logger.info(f"Excluding historical mean features from lagging: {len([col for col in df.columns if '_mean_' in col])} features excluded")
         
         result_df = df.clone()
         lags = [1, 5, 12] if max_lag >= 12 else [1, min(5, max_lag)]
