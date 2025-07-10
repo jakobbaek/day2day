@@ -4,6 +4,8 @@ import requests
 from urllib.parse import urlencode
 from typing import Dict, Any
 import logging
+import time
+from datetime import datetime, timedelta
 from ..config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -17,6 +19,8 @@ class SaxoAuthenticator:
         self.redirect_uri = settings.saxo_redirect_uri
         self.auth_url = settings.saxo_auth_url
         self.access_token = settings.saxo_access_token
+        self.token_expiry_time = None  # Will be set when token is obtained/refreshed
+        self.refresh_token = settings.saxo_refresh_token
     
     def build_authorization_url(self, state: str = None, scope: str = None) -> str:
         """
@@ -75,9 +79,17 @@ class SaxoAuthenticator:
             logger.error(f"Token exchange failed: {response.status_code} - {response.text}")
             raise Exception(f"Failed to obtain access token: {response.status_code} - {response.text}")
         
-        return response.json()
+        token_data = response.json()
+        
+        # Store token expiry time if expires_in is provided
+        if 'expires_in' in token_data:
+            expires_in_seconds = token_data['expires_in']
+            self.token_expiry_time = time.time() + expires_in_seconds
+            logger.info(f"Token will expire in {expires_in_seconds} seconds")
+        
+        return token_data
     
-    def refresh_token(self, refresh_token: str) -> Dict[str, Any]:
+    def refresh_token_request(self, refresh_token: str) -> Dict[str, Any]:
         """
         Refreshes access token using refresh token.
         
@@ -108,7 +120,15 @@ class SaxoAuthenticator:
             logger.error(f"Token refresh failed: {response.status_code} - {response.text}")
             raise Exception(f"Failed to refresh access token: {response.status_code} - {response.text}")
         
-        return response.json()
+        token_data = response.json()
+        
+        # Store token expiry time if expires_in is provided
+        if 'expires_in' in token_data:
+            expires_in_seconds = token_data['expires_in']
+            self.token_expiry_time = time.time() + expires_in_seconds
+            logger.info(f"Refreshed token will expire in {expires_in_seconds} seconds")
+        
+        return token_data
     
     def get_auth_headers(self) -> Dict[str, str]:
         """
@@ -133,6 +153,13 @@ class SaxoAuthenticator:
         if not self.access_token:
             return False
         
+        # Check if token is expired or will expire soon (within half the original lifetime)
+        if self.token_expiry_time:
+            current_time = time.time()
+            if current_time >= self.token_expiry_time:
+                logger.info("Token has expired based on stored expiry time")
+                return False
+        
         # Simple test call to check token validity
         try:
             headers = self.get_auth_headers()
@@ -143,6 +170,36 @@ class SaxoAuthenticator:
             return response.status_code == 200
         except Exception:
             return False
+    
+    def needs_refresh(self) -> bool:
+        """
+        Check if token needs to be refreshed (when half the time until expiration has passed).
+        
+        Returns:
+            True if token should be refreshed, False otherwise
+        """
+        if not self.access_token or not self.token_expiry_time:
+            return True
+        
+        current_time = time.time()
+        
+        # If token has expired, definitely needs refresh
+        if current_time >= self.token_expiry_time:
+            logger.info("Token has expired, needs refresh")
+            return True
+        
+        # Check if we've passed the halfway point to expiration
+        # We need to estimate the original token lifetime to calculate halfway point
+        # Saxo tokens typically last about 1200 seconds (20 minutes)
+        time_remaining = self.token_expiry_time - current_time
+        
+        # If less than half the typical token lifetime remains, refresh
+        typical_lifetime = 1200  # 20 minutes in seconds
+        if time_remaining < (typical_lifetime / 2):
+            logger.info(f"Token has {time_remaining} seconds remaining, refreshing proactively")
+            return True
+        
+        return False
     
     def get_access_token_interactive(self, save_to_env: bool = True) -> Dict[str, Any]:
         """
@@ -188,6 +245,12 @@ class SaxoAuthenticator:
             
             # Update instance with new token
             self.access_token = token_response.get("access_token")
+            self.refresh_token = token_response.get("refresh_token")
+            
+            # Store expiry time
+            if 'expires_in' in token_response:
+                expires_in_seconds = token_response['expires_in']
+                self.token_expiry_time = time.time() + expires_in_seconds
             
             if save_to_env:
                 self._save_token_to_env(token_response)
@@ -271,28 +334,30 @@ class SaxoAuthenticator:
     
     def refresh_access_token_if_needed(self) -> bool:
         """
-        Refresh access token if it's expired or invalid.
+        Refresh access token if it needs refresh (proactively at halfway point).
         
         Returns:
             True if token is valid (refreshed or already valid), False otherwise
         """
-        if self.is_token_valid():
-            logger.info("Access token is still valid")
+        if not self.needs_refresh():
+            logger.debug("Access token is still valid and doesn't need refresh")
             return True
         
         # Try to refresh token
-        refresh_token = settings.saxo_refresh_token if hasattr(settings, 'saxo_refresh_token') else None
+        refresh_token = self.refresh_token or settings.saxo_refresh_token
         
         if not refresh_token:
             logger.warning("No refresh token available, need to re-authenticate")
             return False
         
         try:
-            logger.info("Refreshing access token")
-            token_response = self.refresh_token(refresh_token)
+            logger.info("Refreshing access token proactively")
+            token_response = self.refresh_token_request(refresh_token)
             
             # Update instance with new token
             self.access_token = token_response.get("access_token")
+            if token_response.get("refresh_token"):
+                self.refresh_token = token_response.get("refresh_token")
             
             # Save new tokens
             self._save_token_to_env(token_response)
