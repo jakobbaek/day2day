@@ -3,6 +3,7 @@
 import polars as pl
 import pandas as pd
 import numpy as np
+import time
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -474,41 +475,77 @@ class DataPreparator:
         Returns:
             Path to output file
         """
-        logger.info(f"Preparing training data: {output_title}")
+        logger.info(f"=== STARTING DATA PREPARATION: {output_title} ===")
+        start_time = time.time()
         
-        # Load raw data with datetime standardization (GMT conversion and complete timeline)
+        # Step 1: Load raw data with datetime standardization
+        logger.info("Step 1/9: Loading raw data with datetime standardization...")
+        step_start = time.time()
         df = self.load_raw_data(raw_data_file, standardize_datetime=True)
+        logger.info(f"✓ Step 1 completed in {time.time() - step_start:.2f}s - Loaded {len(df)} rows, {len(df.columns)} columns")
         
-        # Filter high-quality data
-        df = self.filter_high_quality_data(df, min_daily_observations)
+        # Step 2: Filter high-quality data (currently disabled)
+        logger.info("Step 2/9: Filtering high-quality data (currently disabled)")
+        #df = self.filter_high_quality_data(df, min_daily_observations)
         
-        # Filter by trading volume (before instrument selection)
+        # Step 3: Filter by trading volume
         if volume_fraction < 1.0:
+            logger.info(f"Step 3/9: Filtering by trading volume (top {volume_fraction*100:.1f}%)...")
+            step_start = time.time()
             df = self.filter_by_trading_volume(df, volume_fraction)
+            logger.info(f"✓ Step 3 completed in {time.time() - step_start:.2f}s - Reduced to {len(df)} rows")
+        else:
+            logger.info("Step 3/9: Skipping trading volume filter (volume_fraction=1.0)")
         
-        # Filter selected instruments
+        # Step 4: Filter selected instruments
         if selected_instruments:
+            logger.info(f"Step 4/9: Filtering selected instruments ({len(selected_instruments)} instruments)...")
+            step_start = time.time()
             df = df.filter(pl.col("ticker").is_in(selected_instruments))
+            logger.info(f"✓ Step 4 completed in {time.time() - step_start:.2f}s - Reduced to {len(df)} rows")
+        else:
+            logger.info("Step 4/9: Skipping instrument selection (using all instruments)")
         
-        # Note: Datetime standardization already handles missing timestamps and forward filling
-        
-        # Convert to wide format
+        # Step 5: Convert to wide format
+        logger.info("Step 5/9: Converting to wide format...")
+        step_start = time.time()
         value_columns = ["high", "low", "open", "close"]
         df = self.create_wide_format(df, value_columns)
+        logger.info(f"✓ Step 5 completed in {time.time() - step_start:.2f}s - Wide format: {len(df)} rows, {len(df.columns)} columns")
         
-        # Add percentage features if requested
+        # Step 6: Add percentage features
         if use_percentage_features:
+            logger.info("Step 6/9: Adding percentage features...")
+            step_start = time.time()
             df = self.add_percentage_features(df)
+            logger.info(f"✓ Step 6 completed in {time.time() - step_start:.2f}s - Added percentage features: {len(df.columns)} columns")
+        else:
+            logger.info("Step 6/9: Skipping percentage features")
         
-        # Add historical features if requested
+        # Step 7: Add historical features
         if add_historical_means:
+            logger.info("Step 7/9: Adding historical mean features...")
+            step_start = time.time()
             df = self.add_historical_features(df)
+            logger.info(f"✓ Step 7 completed in {time.time() - step_start:.2f}s - Added historical features: {len(df.columns)} columns")
+        else:
+            logger.info("Step 7/9: Skipping historical features")
         
-        # Create lagged features
+        # Step 8: Create lagged features
+        logger.info(f"Step 8/9: Creating lagged features (max_lag={max_lag})...")
+        step_start = time.time()
         df = self.create_lagged_features(df, max_lag=max_lag)
+        logger.info(f"✓ Step 8 completed in {time.time() - step_start:.2f}s - Added lagged features: {len(df.columns)} columns")
         
         # Add time features
+        logger.info("Step 8.5/9: Adding time-based features...")
+        step_start = time.time()
         df = self.add_time_features(df)
+        logger.info(f"✓ Step 8.5 completed in {time.time() - step_start:.2f}s - Added time features: {len(df.columns)} columns")
+        
+        # Step 9: Create target variable and finalize
+        logger.info("Step 9/9: Creating target variable and finalizing...")
+        step_start = time.time()
         
         # Create target variable - always use high price as per specifications
         target_price_type = "high"  # Force high price as target
@@ -520,14 +557,21 @@ class DataPreparator:
         df = self.create_target_variable(df, target_column)
         
         # Remove rows with missing target
+        initial_rows = len(df)
         df = df.filter(pl.col("target").is_not_null())
+        final_rows = len(df)
+        logger.info(f"Removed {initial_rows - final_rows} rows with missing target values")
         
         # Save prepared data
         output_file = f"{output_title}.csv"
         output_path = settings.get_processed_data_file(output_file)
         
         df.write_csv(output_path)
-        logger.info(f"Saved training data to {output_path} ({len(df)} rows)")
+        logger.info(f"✓ Step 9 completed in {time.time() - step_start:.2f}s - Saved to {output_path}")
+        
+        total_time = time.time() - start_time
+        logger.info(f"=== DATA PREPARATION COMPLETED in {total_time:.2f}s ===")
+        logger.info(f"Final dataset: {len(df)} rows, {len(df.columns)} columns")
         
         return str(output_path)
     

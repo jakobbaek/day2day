@@ -105,68 +105,68 @@ class DateTimeStandardizer:
         last_sunday = last_day - timedelta(days=days_since_sunday)
         return last_sunday
     
-    def infer_market_hours(self, df: pl.DataFrame, ticker: str) -> Tuple[time, time]:
+    def infer_market_hours(self, df: pl.DataFrame, ticker: str = None) -> Tuple[time, time]:
         """
-        Infer market opening hours from the data for a specific ticker.
+        Infer market opening hours from ALL instruments in the data.
+        All instruments share the same market hours - the earliest opening time 
+        and latest closing time across all instruments for each day.
         
         Args:
-            df: DataFrame with market data
-            ticker: Ticker symbol
+            df: DataFrame with market data for all instruments
+            ticker: Ticker symbol (used for caching, but hours are calculated globally)
             
         Returns:
             Tuple of (market_open_time, market_close_time)
         """
-        if ticker in self.market_hours_cache:
-            return self.market_hours_cache[ticker]
+        cache_key = "global_market_hours"
+        if cache_key in self.market_hours_cache:
+            return self.market_hours_cache[cache_key]
         
-        logger.info(f"Inferring market hours for {ticker}")
+        logger.info("Inferring global market hours from all instruments")
         
-        # Filter data for this ticker
-        ticker_data = df.filter(pl.col("ticker") == ticker)
-        
-        if ticker_data.is_empty():
+        if df.is_empty():
             # Default to Copenhagen Stock Exchange hours in GMT
-            # CSE is typically 9:00-17:00 CET, which is 8:00-16:00 GMT (winter) or 7:00-15:00 GMT (summer)
             default_open = time(8, 0)  # Conservative estimate
             default_close = time(16, 0)
-            self.market_hours_cache[ticker] = (default_open, default_close)
+            self.market_hours_cache[cache_key] = (default_open, default_close)
             return default_open, default_close
         
-        # Extract time component from datetime
-        ticker_data = ticker_data.with_columns(
+        # Extract time and date components from datetime for all data
+        df_with_time = df.with_columns([
             pl.col("datetime").dt.time().alias("time_only"),
             pl.col("datetime").dt.date().alias("date_only")
-        )
+        ])
         
-        # Group by date and find min/max times for each trading day
-        daily_hours = (ticker_data
+        # Group by date and find absolute min/max times across ALL instruments for each day
+        daily_global_hours = (df_with_time
             .group_by("date_only")
             .agg([
-                pl.col("time_only").min().alias("day_open"),
-                pl.col("time_only").max().alias("day_close"),
-                pl.col("time_only").count().alias("observations")
+                pl.col("time_only").min().alias("global_day_open"),
+                pl.col("time_only").max().alias("global_day_close"),
+                pl.col("time_only").count().alias("total_observations")
             ])
-            .filter(pl.col("observations") > 10)  # Filter out days with too few observations
+            .filter(pl.col("total_observations") > 50)  # Filter out days with too few observations
         )
         
-        if daily_hours.is_empty():
+        if daily_global_hours.is_empty():
             # Fallback to default hours
             default_open = time(8, 0)
             default_close = time(16, 0)
-            self.market_hours_cache[ticker] = (default_open, default_close)
+            self.market_hours_cache[cache_key] = (default_open, default_close)
             return default_open, default_close
         
-        # Calculate most common opening and closing times
-        open_times = daily_hours.select("day_open").to_series().to_list()
-        close_times = daily_hours.select("day_close").to_series().to_list()
+        # Calculate most common global opening and closing times
+        open_times = daily_global_hours.select("global_day_open").to_series().to_list()
+        close_times = daily_global_hours.select("global_day_close").to_series().to_list()
         
         # Use mode (most common time) or median if mode is not clear
         market_open = self._calculate_typical_time(open_times)
         market_close = self._calculate_typical_time(close_times)
         
-        self.market_hours_cache[ticker] = (market_open, market_close)
+        self.market_hours_cache[cache_key] = (market_open, market_close)
         
-        logger.info(f"Inferred market hours for {ticker}: {market_open} - {market_close} GMT")
+        logger.info(f"Inferred global market hours: {market_open} - {market_close} GMT")
+        logger.info(f"Based on {len(daily_global_hours)} trading days with sufficient data")
         
         return market_open, market_close
     
@@ -290,28 +290,63 @@ class DateTimeStandardizer:
         Returns:
             DataFrame with standardized datetime and complete timelines
         """
-        logger.info("Standardizing datetime for all instruments")
+        import time
+        start_time = time.time()
+        
+        logger.info("=== DATETIME STANDARDIZATION PROCESS ===")
+        logger.info(f"Input data: {len(df)} rows, {len(df.columns)} columns")
         
         # First standardize datetime to GMT
+        logger.info("Sub-step 1/4: Converting datetime to GMT...")
+        step_start = time.time()
         df = self.standardize_to_gmt(df)
+        logger.info(f"✓ GMT conversion completed in {time.time() - step_start:.2f}s")
         
         # Get unique tickers
+        logger.info("Sub-step 2/4: Analyzing instruments...")
+        step_start = time.time()
         tickers = df.select("ticker").unique().to_series().to_list()
+        logger.info(f"✓ Found {len(tickers)} unique instruments in {time.time() - step_start:.2f}s")
+        
+        # Infer global market hours (once for all instruments)
+        logger.info("Sub-step 3/4: Inferring global market hours...")
+        step_start = time.time()
+        market_open, market_close = self.infer_market_hours(df)
+        logger.info(f"✓ Market hours inferred in {time.time() - step_start:.2f}s: {market_open} - {market_close}")
         
         # Process each ticker separately
+        logger.info("Sub-step 4/4: Creating complete timelines for all instruments...")
+        step_start = time.time()
         standardized_dfs = []
         
-        for ticker in tickers:
-            logger.info(f"Processing ticker: {ticker}")
+        for i, ticker in enumerate(tickers, 1):
+            ticker_start = time.time()
+            logger.debug(f"Processing {i}/{len(tickers)}: {ticker}")
             ticker_df = self.create_complete_timeline(df, ticker)
             standardized_dfs.append(ticker_df)
+            
+            if i % 10 == 0:  # Log progress every 10 instruments
+                elapsed = time.time() - step_start
+                avg_time = elapsed / i
+                remaining = (len(tickers) - i) * avg_time
+                logger.info(f"Progress: {i}/{len(tickers)} instruments processed ({elapsed:.1f}s elapsed, ~{remaining:.1f}s remaining)")
+        
+        logger.info(f"✓ All timeline creation completed in {time.time() - step_start:.2f}s")
         
         # Combine all tickers
+        logger.info("Combining all instrument data...")
+        combine_start = time.time()
         result_df = pl.concat(standardized_dfs)
+        logger.info(f"✓ Data concatenation completed in {time.time() - combine_start:.2f}s")
         
         # Sort by ticker and datetime
+        logger.info("Final sorting...")
+        sort_start = time.time()
         result_df = result_df.sort(["ticker", "datetime"])
+        logger.info(f"✓ Sorting completed in {time.time() - sort_start:.2f}s")
         
-        logger.info(f"Standardization complete. Final shape: {result_df.shape}")
+        total_time = time.time() - start_time
+        logger.info(f"=== DATETIME STANDARDIZATION COMPLETED in {total_time:.2f}s ===")
+        logger.info(f"Final shape: {result_df.shape} (from {len(df)} to {len(result_df)} rows)")
         
         return result_df
