@@ -34,6 +34,7 @@ def main():
     prepare_parser.add_argument('--use-percentage', action='store_true', help='Use percentage features')
     prepare_parser.add_argument('--use-raw-prices', action='store_true', help='Use raw price features')
     prepare_parser.add_argument('--no-standardize-datetime', action='store_true', help='Disable datetime standardization')
+    prepare_parser.add_argument('--volume-fraction', type=float, default=1.0, help='Fraction of most traded stocks to include (0.0-1.0, e.g., 0.25 for top 25%)')
     
     # Model training
     train_parser = subparsers.add_parser('train', help='Train models')
@@ -115,12 +116,15 @@ def main():
                 target_price_type=args.target_price_type,
                 use_percentage_features=args.use_percentage,
                 use_raw_prices=args.use_raw_prices,
-                standardize_datetime=not args.no_standardize_datetime
+                standardize_datetime=not args.no_standardize_datetime,
+                volume_fraction=args.volume_fraction
             )
             print(f"Training data prepared successfully: {output_path}")
             print("✓ Target prediction: HIGH price of target instrument (as per specifications)")
             if not args.no_standardize_datetime:
                 print("✓ Datetime standardization: GMT conversion and complete timeline creation enabled")
+            if args.volume_fraction < 1.0:
+                print(f"✓ Trading volume filter: Top {args.volume_fraction*100:.1f}% most traded stocks selected")
         
         elif args.command == 'train':
             # Create model configs

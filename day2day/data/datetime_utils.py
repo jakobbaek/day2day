@@ -29,10 +29,19 @@ class DateTimeStandardizer:
         """
         logger.info("Standardizing datetimes to GMT")
         
-        # Ensure datetime is properly parsed
-        df = df.with_columns(
-            pl.col(datetime_col).str.slice(0, length=19).str.to_datetime("%Y-%m-%dT%H:%M:%S")
-        )
+        # Check if datetime column is already parsed or needs parsing
+        datetime_dtype = df.select(pl.col(datetime_col)).dtypes[0]
+        
+        if datetime_dtype == pl.String or datetime_dtype == pl.Utf8:
+            # Parse string datetime
+            df = df.with_columns(
+                pl.col(datetime_col).str.slice(0, length=19).str.to_datetime("%Y-%m-%dT%H:%M:%S")
+            )
+        elif datetime_dtype != pl.Datetime:
+            # Convert other types to datetime if needed
+            df = df.with_columns(
+                pl.col(datetime_col).cast(pl.Datetime)
+            )
         
         # Convert to UTC/GMT if timezone info is available
         # For Danish market data, assume CET/CEST timezone

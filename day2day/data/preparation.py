@@ -89,6 +89,64 @@ class DataPreparator:
         
         return df.filter(pl.col("ticker").is_in(quality_tickers)).drop("date")
     
+    def filter_by_trading_volume(self, df: pl.DataFrame, volume_fraction: float = 1.0) -> pl.DataFrame:
+        """
+        Filter instruments based on trading volume (inferred from price estimates per day).
+        
+        Args:
+            df: Input DataFrame
+            volume_fraction: Fraction of most traded stocks to include (0.0 to 1.0)
+                           e.g., 0.25 = top 25% most traded stocks
+                           
+        Returns:
+            Filtered DataFrame with only the most traded instruments
+        """
+        if volume_fraction <= 0.0 or volume_fraction > 1.0:
+            raise ValueError("volume_fraction must be between 0.0 and 1.0")
+        
+        logger.info(f"Filtering instruments by trading volume (top {volume_fraction*100:.1f}%)")
+        
+        # Extract date from datetime
+        df_with_date = df.with_columns(
+            pl.col("datetime").dt.date().alias("date")
+        )
+        
+        # Calculate daily observations per ticker
+        daily_counts = (df_with_date
+            .group_by(["ticker", "date"])
+            .agg(pl.count().alias("daily_count"))
+        )
+        
+        # Calculate mean daily observations per ticker (proxy for trading volume)
+        mean_trading_volume = (daily_counts
+            .group_by("ticker")
+            .agg(pl.col("daily_count").mean().alias("avg_daily_observations"))
+            .sort("avg_daily_observations", descending=True)
+        )
+        
+        # Calculate how many instruments to keep
+        total_instruments = len(mean_trading_volume)
+        keep_count = max(1, int(total_instruments * volume_fraction))
+        
+        # Select top instruments by trading volume
+        top_instruments = (mean_trading_volume
+            .head(keep_count)
+            .select("ticker")
+            .to_series()
+            .to_list()
+        )
+        
+        logger.info(f"Selected {keep_count} most traded instruments out of {total_instruments}")
+        logger.info(f"Top instruments: {top_instruments[:5]}{'...' if len(top_instruments) > 5 else ''}")
+        
+        # Log trading volume statistics
+        selected_stats = mean_trading_volume.head(keep_count)
+        max_volume = selected_stats.select("avg_daily_observations").max().item()
+        min_volume = selected_stats.select("avg_daily_observations").min().item()
+        logger.info(f"Trading volume range: {min_volume:.1f} - {max_volume:.1f} avg daily observations")
+        
+        return df.filter(pl.col("ticker").is_in(top_instruments))
+    
     def fill_missing_timestamps(self, df: pl.DataFrame, reference_ticker: str) -> pl.DataFrame:
         """
         Fill missing timestamps using forward fill strategy.
@@ -394,7 +452,8 @@ class DataPreparator:
                             selected_instruments: List[str] = None,
                             add_historical_means: bool = True,
                             max_lag: int = 12,
-                            min_daily_observations: int = 25) -> str:
+                            min_daily_observations: int = 25,
+                            volume_fraction: float = 1.0) -> str:
         """
         Prepare training data according to specifications.
         
@@ -409,6 +468,8 @@ class DataPreparator:
             add_historical_means: Whether to add historical mean features
             max_lag: Maximum lag for lagged features
             min_daily_observations: Minimum daily observations for quality filter
+            volume_fraction: Fraction of most traded stocks to include (0.0 to 1.0)
+                           e.g., 0.25 = top 25% most traded stocks
             
         Returns:
             Path to output file
@@ -420,6 +481,10 @@ class DataPreparator:
         
         # Filter high-quality data
         df = self.filter_high_quality_data(df, min_daily_observations)
+        
+        # Filter by trading volume (before instrument selection)
+        if volume_fraction < 1.0:
+            df = self.filter_by_trading_volume(df, volume_fraction)
         
         # Filter selected instruments
         if selected_instruments:

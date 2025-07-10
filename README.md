@@ -93,6 +93,9 @@
 
   ### Prepare training data
   day2day prepare --raw-data-file danish_stocks_1m.csv --output-title my_data --target-instrument NOVO-B.CO
+  
+  ### Prepare training data with volume filtering (top 25% most traded stocks)
+  day2day prepare --raw-data-file danish_stocks_1m.csv --output-title my_data --target-instrument NOVO-B.CO --volume-fraction 0.25
 
   ### Train models
   day2day train --training-data-title my_data --target-instrument NOVO-B.CO
