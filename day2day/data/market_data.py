@@ -237,11 +237,11 @@ class MarketDataCollector:
             
             # Check token validity every hour
             current_time = time.time()
-            if current_time - last_token_check > token_check_interval:
-                logger.info("Checking token validity during long collection process")
-                if not self.authenticator.ensure_valid_token():
-                    raise Exception("Failed to maintain valid access token during collection")
-                last_token_check = current_time
+            #if current_time - last_token_check > token_check_interval:
+            logger.info("Checking token validity during long collection process")
+            if not self.authenticator.ensure_valid_token():
+                raise Exception("Failed to maintain valid access token during collection")
+            last_token_check = current_time
             
             try:
                 instrument_data = self.collect_instrument_data(
