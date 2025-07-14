@@ -299,104 +299,52 @@ class ModelTrainer:
         recommendations = []
         
         if day_trading_mode:
-            logger.info("Day trading mode: Using only null-compatible models")
-            logger.info("This is important because lagged features have nulls at market open")
+            logger.info("Day trading mode: Using single XGBoost model (default)")
+            logger.info("XGBoost is optimal for day trading as it handles nulls at market open")
             
             # Get available null-compatible models
             null_safe_models = get_null_compatible_models()
             
             if 'xgboost' in null_safe_models:
-                # Always recommend XGBoost (excellent with nulls)
+                # Single XGBoost model as default
                 recommendations.append({
                     'name': 'xgboost_default',
                     'type': 'xgboost',
                     'params': {
                         'n_estimators': 100,
                         'max_depth': 6,
-                        'learning_rate': 0.1
+                        'learning_rate': 0.1,
+                        'random_state': 42
                     }
                 })
-                
-                # Add a more conservative XGBoost variant
-                recommendations.append({
-                    'name': 'xgboost_conservative',
-                    'type': 'xgboost',
-                    'params': {
-                        'n_estimators': 200,
-                        'max_depth': 4,
-                        'learning_rate': 0.05
-                    }
-                })
-            
-            if 'random_forest' in null_safe_models:
-                # Recommend Random Forest (also handles nulls well)
+            elif 'random_forest' in null_safe_models:
+                # Fallback to Random Forest if XGBoost not available
+                logger.warning("XGBoost not available, falling back to Random Forest")
                 recommendations.append({
                     'name': 'random_forest_default',
                     'type': 'random_forest',
                     'params': {
                         'n_estimators': 100,
-                        'max_depth': 10
+                        'max_depth': 10,
+                        'random_state': 42
                     }
                 })
-            
-            if not recommendations:
-                logger.warning("No null-compatible models available! Install XGBoost or scikit-learn")
+            else:
+                logger.error("No null-compatible models available! Install XGBoost or scikit-learn")
                 
         else:
-            # Traditional mode - all models available
-            logger.info("Traditional mode: All models available (nulls will be removed)")
+            # Traditional mode - single XGBoost model
+            logger.info("Traditional mode: Using single XGBoost model (default)")
             
-            # Always recommend XGBoost
+            # Single XGBoost model as default
             recommendations.append({
                 'name': 'xgboost_default',
                 'type': 'xgboost',
                 'params': {
                     'n_estimators': 100,
                     'max_depth': 6,
-                    'learning_rate': 0.1
-                }
-            })
-        
-        # For larger datasets, recommend more complex configurations
-        if sample_count > 10000:
-            recommendations.append({
-                'name': 'xgboost_large',
-                'type': 'xgboost',
-                'params': {
-                    'n_estimators': 200,
-                    'max_depth': 8,
-                    'learning_rate': 0.05
-                }
-            })
-        
-        # Always recommend Random Forest
-        recommendations.append({
-            'name': 'random_forest_default',
-            'type': 'random_forest',
-            'params': {
-                'n_estimators': 100,
-                'max_depth': 10
-            }
-        })
-        
-        # For smaller feature sets, recommend linear models
-        if feature_count < 50:
-            recommendations.append({
-                'name': 'ridge_regression',
-                'type': 'ridge_regression',
-                'params': {
-                    'alpha': 1.0
-                }
-            })
-        
-        # For medium-sized datasets, recommend neural networks
-        if 5000 < sample_count < 50000:
-            recommendations.append({
-                'name': 'mlp_default',
-                'type': 'mlp',
-                'params': {
-                    'hidden_layer_sizes': (100, 50),
-                    'max_iter': 200
+                    'learning_rate': 0.1,
+                    'random_state': 42
                 }
             })
         
