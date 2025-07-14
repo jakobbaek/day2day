@@ -383,7 +383,9 @@ class DataPreparator:
         )
         
         for period_name, days in periods.items():
-            logger.info(f"Processing {period_name} period ({days} days lookback)")
+            # Calculate min_periods for holiday gap handling
+            min_periods = max(1, days // 3) if days > 10 else max(1, days // 2)
+            logger.info(f"Processing {period_name} period ({days} days lookback, min_periods={min_periods} for holiday gaps)")
             period_start = time.time()
             
             # Step 1: Create daily aggregates for ALL instruments at once
@@ -416,13 +418,15 @@ class DataPreparator:
                 logger.warning(f"Expected column {sample_col} not found in daily aggregates")
             
             # Step 2: Calculate rolling means for all columns
+            # Handle holiday gaps by using min_periods to allow partial windows
             rolling_exprs = []
             for col in target_columns:
                 if col != "datetime":
                     daily_col = f"daily_{col}"
                     feature_name = f"{col}_mean_{period_name}"
+                    # Use min_periods to allow calculation even with gaps (holidays, weekends)
                     rolling_exprs.append(
-                        pl.col(daily_col).rolling_mean(days).alias(feature_name)
+                        pl.col(daily_col).rolling_mean(days, min_periods=min_periods).alias(feature_name)
                     )
             
             daily_features = daily_aggregates.with_columns(rolling_exprs)
@@ -442,6 +446,16 @@ class DataPreparator:
                     # Show some sample values
                     sample_values = daily_features.select(pl.col(sample_feature)).head(5).to_series().to_list()
                     logger.debug(f"Sample rolling mean values: {sample_values}")
+                    
+                    # Check for holiday gaps - look for consecutive null dates
+                    if null_count > 0:
+                        null_dates = daily_features.filter(pl.col(sample_feature).is_null()).select("date").to_series().to_list()
+                        if null_dates:
+                            logger.debug(f"Holiday gap analysis: First 5 null dates: {null_dates[:5]}")
+                            # Check if we have a December-January gap
+                            dec_jan_nulls = [d for d in null_dates if d.month in [12, 1]]
+                            if dec_jan_nulls:
+                                logger.debug(f"December-January holiday nulls detected: {len(dec_jan_nulls)} dates")
             
             # Step 3: Join back to the main dataframe
             result_df = result_df.join(daily_features, on="date", how="left")
