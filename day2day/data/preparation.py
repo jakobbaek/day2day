@@ -352,6 +352,18 @@ class DataPreparator:
             # Default to only Open prices for efficiency
             target_columns = [col for col in df.columns if col.startswith("open_") and col != "datetime"]
             logger.info(f"Using default target columns (Open prices only): {len(target_columns)} columns")
+            if len(target_columns) == 0:
+                logger.warning("No open_ columns found! Available columns:")
+                logger.warning(f"  Sample columns: {df.columns[:10].to_list()}")
+                all_open_cols = [col for col in df.columns if "open" in col.lower()]
+                logger.warning(f"  All columns with 'open': {all_open_cols}")
+            else:
+                logger.info(f"  Target columns: {target_columns[:5]}{'...' if len(target_columns) > 5 else ''}")
+        
+        # If no target columns found, return original dataframe
+        if len(target_columns) == 0:
+            logger.warning("No target columns found for historical features - returning original dataframe")
+            return result_df
         
         if periods is None:
             periods = {
@@ -390,6 +402,19 @@ class DataPreparator:
                 .sort("date")
             )
             
+            # Debug: Check if daily aggregates contain data
+            if daily_aggregates.is_empty():
+                logger.warning(f"No daily aggregates created for {period_name} period!")
+                continue
+            
+            sample_col = f"daily_{target_columns[0]}"
+            if sample_col in daily_aggregates.columns:
+                null_count = daily_aggregates.select(pl.col(sample_col).is_null().sum()).item()
+                total_days = len(daily_aggregates)
+                logger.debug(f"Daily aggregates: {null_count}/{total_days} null days in {sample_col}")
+            else:
+                logger.warning(f"Expected column {sample_col} not found in daily aggregates")
+            
             # Step 2: Calculate rolling means for all columns
             rolling_exprs = []
             for col in target_columns:
@@ -405,6 +430,18 @@ class DataPreparator:
             # Select only the date and the rolling mean features
             feature_cols = ["date"] + [f"{col}_mean_{period_name}" for col in target_columns if col != "datetime"]
             daily_features = daily_features.select(feature_cols)
+            
+            # Debug: Check rolling mean results
+            if len(feature_cols) > 1:
+                sample_feature = feature_cols[1]  # First actual feature (not date)
+                if sample_feature in daily_features.columns:
+                    null_count = daily_features.select(pl.col(sample_feature).is_null().sum()).item()
+                    total_rows = len(daily_features)
+                    logger.debug(f"Rolling means: {null_count}/{total_rows} null values in {sample_feature}")
+                    
+                    # Show some sample values
+                    sample_values = daily_features.select(pl.col(sample_feature)).head(5).to_series().to_list()
+                    logger.debug(f"Sample rolling mean values: {sample_values}")
             
             # Step 3: Join back to the main dataframe
             result_df = result_df.join(daily_features, on="date", how="left")
@@ -476,14 +513,15 @@ class DataPreparator:
         """
         Create target variable for prediction.
         
-        For day trading, marks predictions in the last X hours as not suitable for trading
-        but preserves them for model evaluation purposes.
+        Creates target variable for ALL time periods to maximize training data and enable
+        complete model evaluation. For day trading deployment, use the trading_eligible 
+        flag to filter out predictions that would extend beyond market close.
         
         Args:
             df: Input DataFrame
             target_column: Column name for target variable
             horizon: Prediction horizon in time steps (minutes)
-            exclude_last_hours: Hours to exclude from trading (but keep for evaluation)
+            exclude_last_hours: Hours before market close to mark as not trading-eligible
             
         Returns:
             DataFrame with target variable and trading_eligible flag
@@ -546,10 +584,11 @@ class DataPreparator:
         trading_eligible = len(result_df.filter((pl.col("target").is_not_null()) & (pl.col("trading_eligible") == True)))
         evaluation_only = total_predictions - trading_eligible
         
-        logger.info(f"Day trading constraints applied:")
-        logger.info(f"  Total valid predictions: {total_predictions}")
-        logger.info(f"  Trading eligible: {trading_eligible}")
-        logger.info(f"  Evaluation only (late day): {evaluation_only}")
+        logger.info(f"Day trading deployment strategy:")
+        logger.info(f"  Total predictions (for training/evaluation): {total_predictions}")
+        logger.info(f"  Trading eligible (safe for deployment): {trading_eligible}")
+        logger.info(f"  Evaluation only (would extend beyond market close): {evaluation_only}")
+        logger.info(f"  Deployment note: Filter by trading_eligible=True to avoid next-day predictions")
         
         # Remove temporary columns
         result_df = result_df.drop(["time_of_day", "trading_date"])
