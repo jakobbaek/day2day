@@ -230,8 +230,8 @@ class DateTimeStandardizer:
             .sort("datetime")
         )
         
-        # Forward fill price columns ONLY within the same trading day
-        # This ensures nulls remain at market open (important for day trading)
+        # Forward fill price columns conservatively to avoid flat lines during market closure
+        # Only fill small gaps in actual trading data, not extended periods
         price_columns = ["high", "low", "open", "close"]
         existing_price_cols = [col for col in price_columns if col in complete_data.columns]
         
@@ -241,20 +241,40 @@ class DateTimeStandardizer:
                 pl.col("datetime").dt.date().alias("trading_date")
             )
             
-            # Forward fill within each trading day only
-            complete_data = complete_data.with_columns([
-                pl.col(col).fill_null(strategy="forward").over("trading_date") 
-                for col in existing_price_cols
-            ])
-            
-            # Backward fill within each trading day only (for any remaining nulls)
-            complete_data = complete_data.with_columns([
-                pl.col(col).fill_null(strategy="backward").over("trading_date") 
-                for col in existing_price_cols
-            ])
+            # Conservative approach: analyze null patterns BEFORE forward filling
+            # Only fill gaps that are likely to be real gaps, not market closure periods
+            for col in existing_price_cols:
+                # First, identify the null pattern before any filling
+                complete_data = complete_data.with_columns([
+                    pl.col(col).is_null().cast(pl.Int32).alias(f"{col}_is_null")
+                ])
+                
+                # Count consecutive nulls in rolling windows
+                complete_data = complete_data.with_columns([
+                    pl.col(f"{col}_is_null").rolling_sum(window_size=10).over("trading_date").alias(f"{col}_null_streak")
+                ])
+                
+                # Only forward fill where null streaks are short (< 5 consecutive nulls)
+                # This prevents filling during market closure periods
+                complete_data = complete_data.with_columns([
+                    pl.when(pl.col(f"{col}_null_streak") < 5)
+                    .then(pl.col(col).fill_null(strategy="forward").over("trading_date"))
+                    .otherwise(pl.col(col))  # Keep original nulls for long streaks
+                    .alias(col)
+                ])
+                
+                # Clean up temporary columns
+                complete_data = complete_data.drop([f"{col}_is_null", f"{col}_null_streak"])
             
             # Remove temporary date column
             complete_data = complete_data.drop("trading_date")
+        
+        # Log information about null patterns for debugging
+        if existing_price_cols:
+            sample_col = existing_price_cols[0]
+            null_count = complete_data.select(pl.col(sample_col).is_null().sum()).item()
+            total_count = len(complete_data)
+            logger.debug(f"Timeline created for {ticker}: {null_count}/{total_count} nulls preserved in {sample_col} (prevents flat lines)")
         
         logger.debug(f"Timeline created with proper day boundaries for {ticker}")
         
