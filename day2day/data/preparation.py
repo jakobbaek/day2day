@@ -442,16 +442,26 @@ class DataPreparator:
         
         logger.info(f"Creating lagged features: {lags} (nulls will occur at market open for day trading)")
         
+        # Add trading date column for proper day boundary handling
+        result_df = result_df.with_columns(
+            pl.col("datetime").dt.date().alias("trading_date")
+        )
+        
         total_lag_features = 0
         for lag in lags:
             if lag <= max_lag:
                 for col in target_columns:
                     if col != "datetime":
                         lag_col = f"{col}_lag{lag}"
+                        # Create lagged features that respect trading day boundaries
+                        # This ensures nulls at market open instead of previous day's data
                         result_df = result_df.with_columns(
-                            pl.col(col).shift(lag).alias(lag_col)
+                            pl.col(col).shift(lag).over("trading_date").alias(lag_col)
                         )
                         total_lag_features += 1
+        
+        # Remove temporary trading date column
+        result_df = result_df.drop("trading_date")
         
         logger.info(f"Created {total_lag_features} lagged features")
         logger.info(f"Day trading note: First {max(lags)} minutes after market open will have some null lag features")
