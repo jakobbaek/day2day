@@ -538,10 +538,29 @@ class DataPreparator:
                                 first_values = sample_day_data.select(pl.col(col)).head(10).to_series().to_list()
                                 logger.info(f"Sample day {sample_date} original values (first 10): {first_values}")
                                 
-                                # Also check if this looks like data bleeding
-                                non_null_originals = [v for v in first_values if v is not None]
-                                if len(non_null_originals) > 0:
-                                    logger.info(f"Sample day first non-null values: {non_null_originals[:5]}")
+                                # CRITICAL: Look deeper - maybe first values are nulls but data exists later
+                                all_values = sample_day_data.select(pl.col(col)).to_series().to_list()
+                                non_null_values = [v for v in all_values if v is not None]
+                                
+                                if len(non_null_values) > 0:
+                                    logger.info(f"Sample day has {len(non_null_values)} non-null values total")
+                                    logger.info(f"First 5 non-null values: {non_null_values[:5]}")
+                                    logger.info(f"Last 5 non-null values: {non_null_values[-5:]}")
+                                    
+                                    # Find where actual trading starts
+                                    first_data_index = next((i for i, v in enumerate(all_values) if v is not None), -1)
+                                    if first_data_index > 10:
+                                        logger.warning(f"ISSUE: First actual data at index {first_data_index} - too many nulls at start!")
+                                        logger.warning("This suggests timeline creation is too aggressive or market hours wrong")
+                                        
+                                        # Show some context around first data
+                                        context_start = max(0, first_data_index - 3)
+                                        context_end = min(len(all_values), first_data_index + 7)
+                                        context_values = all_values[context_start:context_end]
+                                        logger.info(f"Values around first data (index {context_start}-{context_end-1}): {context_values}")
+                                else:
+                                    logger.error(f"CRITICAL: Sample day {sample_date} has NO non-null values for {col}!")
+                                    logger.error("This indicates a major data pipeline issue!")
                         
                         # Create lagged features that respect trading day boundaries
                         # This ensures nulls at market open instead of previous day's data

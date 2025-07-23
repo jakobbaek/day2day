@@ -230,6 +230,22 @@ class DateTimeStandardizer:
             .sort("datetime")
         )
         
+        # CRITICAL DEBUG: Check what we get BEFORE any forward filling
+        if "high" in complete_data.columns:
+            raw_values = complete_data.select("high").head(20).to_series().to_list()
+            logger.debug(f"RAW joined data for {ticker} (first 20 high values): {raw_values}")
+            
+            # Count actual data points vs nulls
+            total_rows = len(complete_data)
+            null_count = complete_data.select(pl.col("high").is_null().sum()).item()
+            data_percentage = ((total_rows - null_count) / total_rows) * 100
+            logger.debug(f"Raw data density for {ticker}: {data_percentage:.1f}% ({total_rows - null_count}/{total_rows} non-null)")
+            
+            # Check if we have mostly nulls (indicates incomplete timeline)
+            if data_percentage < 20:
+                logger.warning(f"LOW DATA DENSITY for {ticker}: Only {data_percentage:.1f}% actual data")
+                logger.warning("This timeline creation might be too aggressive - creating too many empty slots")
+        
         # Forward fill price columns conservatively to avoid flat lines during market closure
         # Only fill small gaps in actual trading data, not extended periods
         price_columns = ["high", "low", "open", "close"]
@@ -296,6 +312,21 @@ class DateTimeStandardizer:
                 if market_open_nulls < 3:  # Expect at least some nulls at market open
                     logger.warning(f"SUSPICIOUS: Only {market_open_nulls} nulls in first 5 market open values")
                     logger.warning("This might indicate data bleeding across market boundaries!")
+                
+                # More detailed analysis of what changed
+                original_nulls = sum(1 for v in original_values[:20] if v is None)
+                filled_nulls = sum(1 for v in filled_values[:20] if v is None)
+                logger.debug(f"Fill operation changed nulls from {original_nulls}/20 to {filled_nulls}/20")
+                
+                if filled_nulls < original_nulls - 5:  # Filled too many nulls
+                    logger.error(f"CRITICAL: Forward fill too aggressive for {col}!")
+                    logger.error(f"Filled {original_nulls - filled_nulls} nulls that should have remained null")
+                    logger.error("This is likely causing the data bleeding issue!")
+                    
+                    # Show which positions got filled
+                    for i in range(min(20, len(original_values), len(filled_values))):
+                        if original_values[i] is None and filled_values[i] is not None:
+                            logger.error(f"Position {i}: NULL → {filled_values[i]:.2f} (SHOULD STAY NULL!)")
             
             # Remove temporary date column
             complete_data = complete_data.drop("trading_date")
