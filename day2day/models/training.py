@@ -57,8 +57,40 @@ class ModelTrainer:
             y = y[mask]
             
             null_count = X.isnull().sum().sum()
+            total_cells = len(X) * len(X.columns)
+            null_percentage = (null_count / total_cells) * 100
+            
             logger.info(f"Loaded training data (preserving nulls): {len(X)} samples, {len(feature_cols)} features")
-            logger.info(f"Null values preserved: {null_count} nulls in feature matrix (important for day trading)")
+            logger.info(f"Null values preserved: {null_count:,} / {total_cells:,} cells ({null_percentage:.2f}%)")
+            
+            # Break down nulls by type for better understanding
+            if null_percentage > 50:
+                logger.warning(f"High null percentage ({null_percentage:.1f}%) detected - analyzing...")
+                
+                # Check nulls per feature
+                null_counts_per_feature = X.isnull().sum().sort_values(ascending=False)
+                top_null_features = null_counts_per_feature.head(10)
+                
+                logger.info("Features with most nulls:")
+                for feature, count in top_null_features.items():
+                    pct = (count / len(X)) * 100
+                    logger.info(f"  {feature}: {count:,} ({pct:.1f}%)")
+                
+                # Identify potential causes
+                lag_features = [f for f in X.columns if 'lag' in f]
+                historical_features = [f for f in X.columns if 'mean_' in f]
+                
+                if lag_features:
+                    lag_nulls = X[lag_features].isnull().sum().sum()
+                    lag_pct = (lag_nulls / (len(X) * len(lag_features))) * 100
+                    logger.info(f"Lagged features: {lag_nulls:,} nulls ({lag_pct:.1f}%) - expected for day trading")
+                
+                if historical_features:
+                    hist_nulls = X[historical_features].isnull().sum().sum()
+                    hist_pct = (hist_nulls / (len(X) * len(historical_features))) * 100
+                    logger.info(f"Historical features: {hist_nulls:,} nulls ({hist_pct:.1f}%) - may indicate holiday gaps")
+            else:
+                logger.info(f"Null percentage ({null_percentage:.1f}%) is reasonable for day trading")
             
             # CRITICAL DEBUG: Check target variable distribution
             target_std = y.std()
