@@ -498,17 +498,56 @@ class DataPreparator:
             pl.col("datetime").dt.date().alias("trading_date")
         )
         
+        # DEBUG: Check trading date boundaries
+        trading_days = result_df.select("trading_date").unique().sort("trading_date")
+        logger.info(f"Creating lags across {len(trading_days)} trading days")
+        logger.debug(f"First 5 trading days: {trading_days.head(5).to_series().to_list()}")
+        
+        # DEBUG: Check a sample day for lag creation
+        sample_date = trading_days.head(1).to_series().to_list()[0]
+        sample_day_data = result_df.filter(pl.col("trading_date") == sample_date)
+        logger.debug(f"Sample day {sample_date}: {len(sample_day_data)} data points")
+        
         total_lag_features = 0
         for lag in lags:
             if lag <= max_lag:
                 for col in target_columns:
                     if col != "datetime":
                         lag_col = f"{col}_lag{lag}"
+                        
+                        # CRITICAL DEBUG: Check before and after lag creation
+                        if col == target_columns[0] and lag == 1:  # Debug first feature, lag 1
+                            logger.info(f"DEBUG: Creating lag1 for {col}")
+                            
+                            # Check original values at market open
+                            first_day = trading_days.head(1).to_series().to_list()[0]
+                            first_day_data = result_df.filter(pl.col("trading_date") == first_day).sort("datetime")
+                            
+                            if len(first_day_data) > 0:
+                                first_values = first_day_data.select(pl.col(col)).head(5).to_series().to_list()
+                                logger.info(f"First day {first_day} original values: {first_values}")
+                        
                         # Create lagged features that respect trading day boundaries
                         # This ensures nulls at market open instead of previous day's data
                         result_df = result_df.with_columns(
                             pl.col(col).shift(lag).over("trading_date").alias(lag_col)
                         )
+                        
+                        # CRITICAL DEBUG: Check after lag creation
+                        if col == target_columns[0] and lag == 1:  # Debug first feature, lag 1
+                            first_day_after = result_df.filter(pl.col("trading_date") == first_day).sort("datetime")
+                            lag_values = first_day_after.select(pl.col(lag_col)).head(5).to_series().to_list()
+                            logger.info(f"First day {first_day} lag1 values: {lag_values}")
+                            
+                            # Check for unexpected values (should be mostly null at start)
+                            non_null_count = first_day_after.select(pl.col(lag_col).is_not_null().sum()).item()
+                            expected_non_null = max(0, len(first_day_after) - lag)
+                            logger.info(f"Lag1 non-null count: {non_null_count}, expected: {expected_non_null}")
+                            
+                            if non_null_count > expected_non_null + 5:  # Allow some tolerance
+                                logger.error("CRITICAL: Too many non-null lag values at market open!")
+                                logger.error("This indicates data bleeding across trading days!")
+                        
                         total_lag_features += 1
         
         # Remove temporary trading date column
