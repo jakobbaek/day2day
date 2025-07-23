@@ -220,22 +220,46 @@ class ModelEvaluator:
             # Create timeline plot
             ax = axes[i]
             
-            # Skip weekends and create continuous timeline
-            df = pd.DataFrame({
-                'actual': y_true,
-                'predicted': y_pred,
-                'index': range(len(y_true))
-            })
+            # Load test data to get actual datetime information
+            suite_name = f"{training_data_title}_{target_instrument}"
+            suite_dir = settings.models_path / suite_name
+            test_file = suite_dir / "test_data.csv"
             
-            ax.plot(df['index'], df['actual'], label='Actual', color='blue', linewidth=1.5)
-            ax.plot(df['index'], df['predicted'], label='Predicted', color='orange', 
+            if test_file.exists():
+                test_df = pd.read_csv(test_file)
+                if 'datetime' in test_df.columns and len(test_df) == len(y_true):
+                    # Use actual datetime for x-axis
+                    test_df['datetime'] = pd.to_datetime(test_df['datetime'])
+                    x_values = test_df['datetime']
+                    xlabel = 'Date/Time'
+                else:
+                    # Fallback to index
+                    x_values = range(len(y_true))
+                    xlabel = 'Time Steps'
+            else:
+                # Fallback to index
+                x_values = range(len(y_true))
+                xlabel = 'Time Steps'
+            
+            ax.plot(x_values, y_true, label='Actual', color='blue', linewidth=1.5)
+            ax.plot(x_values, y_pred, label='Predicted', color='orange', 
                    linestyle='--', linewidth=1.5)
             
             ax.set_title(f'{model_name} - RMSE: {model_results["metrics"]["rmse"]:.4f}')
-            ax.set_xlabel('Time Steps')
+            ax.set_xlabel(xlabel)
             ax.set_ylabel('Price')
             ax.legend()
             ax.grid(True, alpha=0.3)
+            
+            # Format x-axis for datetime
+            if xlabel == 'Date/Time':
+                ax.tick_params(axis='x', rotation=45)
+                # Show every Nth tick to avoid crowding
+                n_ticks = min(10, len(x_values) // 10)
+                if n_ticks > 0:
+                    tick_indices = range(0, len(x_values), len(x_values) // n_ticks)
+                    ax.set_xticks([x_values.iloc[i] for i in tick_indices])
+                    ax.set_xticklabels([x_values.iloc[i].strftime('%Y-%m-%d %H:%M') for i in tick_indices])
         
         plt.tight_layout()
         
@@ -270,17 +294,20 @@ class ModelEvaluator:
         """
         logger.info("Creating daily timeline diagnostic plot...")
         
-        # Load the original processed data to get datetime information
-        data_file = f"{training_data_title}.csv"
-        data_path = settings.get_processed_data_file(data_file)
+        # Load the TEST data specifically to get the right datetime range
+        suite_name = f"{training_data_title}_{target_instrument}"
+        suite_dir = settings.models_path / suite_name
+        test_file = suite_dir / "test_data.csv"
         
-        if not data_path.exists():
-            raise FileNotFoundError(f"Processed data file not found: {data_path}")
+        if not test_file.exists():
+            raise FileNotFoundError(f"Test data file not found: {test_file}")
         
-        # Load data with datetime
-        df = pd.read_csv(data_path)
-        df['datetime'] = pd.to_datetime(df['datetime'])
-        df['date'] = df['datetime'].dt.date
+        # Load test data with datetime
+        test_df = pd.read_csv(test_file)
+        test_df['datetime'] = pd.to_datetime(test_df['datetime'])
+        test_df['date'] = test_df['datetime'].dt.date
+        
+        logger.info(f"Loaded test data: {len(test_df)} rows spanning {test_df['date'].min()} to {test_df['date'].max()}")
         
         # Get evaluation results for comparison
         results = self.evaluate_model_suite(training_data_title, target_instrument)
@@ -288,16 +315,20 @@ class ModelEvaluator:
         if model_names is None:
             model_names = list(results.keys())
         
-        # Select 6 random dates with sufficient data
-        daily_counts = df.groupby('date').size()
+        # Select 6 random dates from TEST SET ONLY with sufficient data
+        daily_counts = test_df.groupby('date').size()
         valid_dates = daily_counts[daily_counts >= 50].index.tolist()  # At least 50 data points
         
+        logger.info(f"Found {len(valid_dates)} valid test dates with sufficient data")
+        
         if len(valid_dates) < 6:
-            logger.warning(f"Only {len(valid_dates)} dates with sufficient data found")
+            logger.warning(f"Only {len(valid_dates)} test dates with sufficient data found")
             sample_dates = valid_dates
         else:
             np.random.seed(42)  # Reproducible sampling
             sample_dates = np.random.choice(valid_dates, 6, replace=False)
+        
+        logger.info(f"Sampled test dates for diagnostic: {sample_dates}")
         
         # Create figure with 2x3 subplots
         fig, axes = plt.subplots(2, 3, figsize=(18, 10))
@@ -305,12 +336,12 @@ class ModelEvaluator:
         
         # Get the target column for actual values
         target_col = f"high_{target_instrument}"
-        if target_col not in df.columns:
+        if target_col not in test_df.columns:
             logger.warning(f"Target column {target_col} not found, using 'target' column")
             target_col = 'target'
         
         for i, date in enumerate(sample_dates[:6]):
-            daily_data = df[df['date'] == date].copy()
+            daily_data = test_df[test_df['date'] == date].copy()
             daily_data = daily_data.sort_values('datetime')
             
             ax = axes[i]
@@ -381,9 +412,9 @@ class ModelEvaluator:
             logger.info(f"Saved daily timeline diagnostic plot to {plot_file}")
         
         # Log diagnostic insights
-        logger.info("Daily timeline diagnostic insights:")
+        logger.info("Daily timeline diagnostic insights (TEST SET ONLY):")
         for i, date in enumerate(sample_dates[:6]):
-            daily_data = df[df['date'] == date]
+            daily_data = test_df[test_df['date'] == date]
             if target_col in daily_data.columns:
                 price_values = daily_data[target_col].dropna()
                 if len(price_values) > 0:
