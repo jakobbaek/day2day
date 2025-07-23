@@ -315,6 +315,8 @@ class DataPreparator:
         if target_columns is None:
             target_columns = [col for col in df.columns if col != "datetime"]
         
+        logger.info(f"Adding percentage features for {len(target_columns)} columns using method: {method}")
+        
         result_df = df.clone()
         
         if method == "previous_day_close":
@@ -323,45 +325,66 @@ class DataPreparator:
                 pl.col("datetime").dt.date().alias("date")
             )
             
+            # Extract unique tickers from column names
+            tickers = set()
             for col in target_columns:
-                if "close_" in col:
-                    # Use this as the reference close price
+                if "_" in col:
                     ticker = col.split("_", 1)[1]
-                    close_col = f"close_{ticker}"
+                    tickers.add(ticker)
+            
+            logger.info(f"Found {len(tickers)} unique tickers for percentage calculation")
+            
+            for ticker in tickers:
+                close_col = f"close_{ticker}"
+                
+                if close_col in df.columns:
+                    logger.debug(f"Processing ticker {ticker} with close column {close_col}")
                     
-                    if close_col in df.columns:
-                        # Get daily close prices for this ticker, sorted by date
-                        daily_close = (result_df
-                            .group_by("date")
-                            .agg(pl.col(close_col).last().alias(f"daily_close_{ticker}"))
-                            .sort("date")
-                        )
-                        
-                        # Create previous trading day mapping
-                        # Shift the close prices by 1 position to get previous trading day's close
-                        daily_close_with_prev = daily_close.with_columns([
-                            pl.col(f"daily_close_{ticker}").shift(1).alias(f"prev_close_{ticker}")
-                        ]).select(["date", f"prev_close_{ticker}"])
-                        
-                        # Join and calculate percentage
-                        result_df = result_df.join(daily_close_with_prev, on="date", how="left")
-                        
-                        # Calculate percentage change for all columns related to this ticker
-                        for value_col in target_columns:
-                            if value_col.endswith(f"_{ticker}"):
-                                pct_col = f"{value_col}_pct"
-                                result_df = result_df.with_columns(
-                                    ((pl.col(value_col) - pl.col(f"prev_close_{ticker}")) / 
-                                     pl.col(f"prev_close_{ticker}")).alias(pct_col)
-                                )
-                        
-                        # Clean up temporary column
-                        result_df = result_df.drop(f"prev_close_{ticker}")
+                    # Get daily close prices for this ticker, sorted by date
+                    daily_close = (result_df
+                        .group_by("date")
+                        .agg(pl.col(close_col).last().alias(f"daily_close_{ticker}"))
+                        .sort("date")
+                    )
+                    
+                    # Check if we have valid close prices
+                    valid_closes = daily_close.filter(pl.col(f"daily_close_{ticker}").is_not_null())
+                    if len(valid_closes) == 0:
+                        logger.warning(f"No valid close prices found for ticker {ticker}")
+                        continue
+                    
+                    # Create previous trading day mapping
+                    # Shift the close prices by 1 position to get previous trading day's close
+                    daily_close_with_prev = daily_close.with_columns([
+                        pl.col(f"daily_close_{ticker}").shift(1).alias(f"prev_close_{ticker}")
+                    ]).select(["date", f"prev_close_{ticker}"])
+                    
+                    # Join and calculate percentage
+                    result_df = result_df.join(daily_close_with_prev, on="date", how="left")
+                    
+                    # Calculate percentage change for all columns related to this ticker
+                    processed_cols = 0
+                    for value_col in target_columns:
+                        if value_col.endswith(f"_{ticker}"):
+                            pct_col = f"{value_col}_pct"
+                            result_df = result_df.with_columns(
+                                ((pl.col(value_col) - pl.col(f"prev_close_{ticker}")) / 
+                                 pl.col(f"prev_close_{ticker}")).alias(pct_col)
+                            )
+                            processed_cols += 1
+                    
+                    logger.debug(f"Created {processed_cols} percentage columns for ticker {ticker}")
+                    
+                    # Clean up temporary column
+                    result_df = result_df.drop(f"prev_close_{ticker}")
+                else:
+                    logger.warning(f"Close column {close_col} not found for ticker {ticker}")
             
             result_df = result_df.drop("date")
         
         elif method == "previous_value":
             # Calculate percentage relative to previous value
+            logger.info("Using previous_value method for percentage calculation")
             for col in target_columns:
                 pct_col = f"{col}_pct"
                 result_df = result_df.with_columns(
@@ -717,7 +740,14 @@ class DataPreparator:
         
         stats_dict = target_stats.to_dicts()[0]
         logger.info(f"Target variable after creation: count={stats_dict['count']}, nulls={stats_dict['nulls']}")
-        logger.info(f"Target stats: std={stats_dict['std']:.6f}, range={stats_dict['max']-stats_dict['min']:.6f}")
+        std_val = stats_dict['std']
+        max_val = stats_dict['max']
+        min_val = stats_dict['min']
+        
+        std_str = f"{std_val:.6f}" if std_val is not None else "None"
+        range_str = f"{max_val - min_val:.6f}" if (max_val is not None and min_val is not None) else "None"
+        
+        logger.info(f"Target stats: std={std_str}, range={range_str}")
         
         if stats_dict['std'] and stats_dict['std'] < 1e-4:
             logger.error("CRITICAL: Target variable has very low variance right after creation!")
@@ -901,7 +931,13 @@ class DataPreparator:
             step_start = time.time()
             
             # Calculate percentage features (this adds _pct columns)
-            df = self.add_percentage_features(df)
+            # Try previous_day_close method first, fallback to previous_value if it fails
+            try:
+                df = self.add_percentage_features(df, method="previous_day_close")
+            except Exception as e:
+                logger.warning(f"Previous day close method failed: {e}")
+                logger.info("Falling back to previous_value method for percentage calculation")
+                df = self.add_percentage_features(df, method="previous_value")
             
             # Replace raw price columns with percentage columns (same column names)
             price_columns = [col for col in df.columns if any(col.startswith(f"{price}_") for price in value_columns)]
