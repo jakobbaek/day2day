@@ -764,8 +764,37 @@ class DataPreparator:
         logger.info("Step 5/9: Converting to wide format...")
         step_start = time.time()
         value_columns = ["high", "low", "open", "close"]
+        
+        # DEBUG: Check data before wide format conversion
+        if 'high' in df.columns:
+            sample_high = df.filter(pl.col("ticker") == df.select("ticker").unique().head(1).item()).select("high").head(10).to_series().to_list()
+            logger.info(f"BEFORE wide format - sample high values: {sample_high}")
+        
         df = self.create_wide_format(df, value_columns)
         logger.info(f"✓ Step 5 completed in {time.time() - step_start:.2f}s - Wide format: {len(df)} rows, {len(df.columns)} columns")
+        
+        # DEBUG: Check data after wide format conversion
+        high_cols = [col for col in df.columns if col.startswith("high_")]
+        if high_cols:
+            sample_col = high_cols[0]
+            sample_high_wide = df.select(pl.col(sample_col)).head(10).to_series().to_list()
+            logger.info(f"AFTER wide format - sample {sample_col} values: {sample_high_wide}")
+            
+            # Check for suspicious patterns (data bleeding indicators)
+            non_null_values = df.select(pl.col(sample_col).drop_nulls()).to_series().to_list()
+            if len(non_null_values) > 100:
+                first_100 = non_null_values[:100]
+                if len(set(first_100)) < 10:  # Very few unique values
+                    logger.warning(f"SUSPICIOUS: {sample_col} has very few unique values in first 100 non-null entries")
+                    logger.warning(f"Unique values: {list(set(first_100))}")
+                
+                # Check if values are artificially constant
+                import statistics
+                if len(first_100) > 50:
+                    std_dev = statistics.stdev(first_100)
+                    if std_dev < 0.1:
+                        logger.error(f"CRITICAL: {sample_col} shows artificial flatness (std={std_dev:.6f})")
+                        logger.error("This indicates data bleeding during wide format conversion!")
         
         # Step 6: Handle price feature type selection (raw vs percentage)
         if use_percentage_features:

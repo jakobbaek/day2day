@@ -241,30 +241,61 @@ class DateTimeStandardizer:
                 pl.col("datetime").dt.date().alias("trading_date")
             )
             
-            # Conservative approach: analyze null patterns BEFORE forward filling
-            # Only fill gaps that are likely to be real gaps, not market closure periods
+            # CRITICAL FIX: The conservative forward-fill logic was flawed
+            # The rolling sum approach was incorrectly filling nulls at market open
+            # Let's use a much simpler approach: NO forward fill across day boundaries
+            
+            logger.debug(f"Applying day-boundary-aware forward fill for {ticker}")
+            
             for col in existing_price_cols:
-                # First, identify the null pattern before any filling
+                # Get original column values before any modification
+                original_values = complete_data.select(pl.col(col)).head(20).to_series().to_list()
+                logger.debug(f"Original {col} values (first 20): {original_values}")
+                
+                # Simple rule: Only forward fill within very small gaps (1-2 minutes max)
+                # This prevents any bleeding across market sessions
+                
+                # Create a marker for actual data points (not nulls)
                 complete_data = complete_data.with_columns([
-                    pl.col(col).is_null().cast(pl.Int32).alias(f"{col}_is_null")
+                    pl.col(col).is_not_null().alias(f"{col}_has_data")
                 ])
                 
-                # Count consecutive nulls in rolling windows
+                # Use a very conservative approach: only fill single null gaps
+                # that are surrounded by actual data within the same day
                 complete_data = complete_data.with_columns([
-                    pl.col(f"{col}_is_null").rolling_sum(window_size=10).over("trading_date").alias(f"{col}_null_streak")
+                    # Check if previous and next values exist (within same day)
+                    pl.col(f"{col}_has_data").shift(1).over("trading_date").alias(f"{col}_prev_has_data"),
+                    pl.col(f"{col}_has_data").shift(-1).over("trading_date").alias(f"{col}_next_has_data")
                 ])
                 
-                # Only forward fill where null streaks are short (< 5 consecutive nulls)
-                # This prevents filling during market closure periods
+                # Only fill nulls that have data before AND after within the same day
                 complete_data = complete_data.with_columns([
-                    pl.when(pl.col(f"{col}_null_streak") < 5)
+                    pl.when(
+                        pl.col(col).is_null() & 
+                        pl.col(f"{col}_prev_has_data") & 
+                        pl.col(f"{col}_next_has_data")
+                    )
                     .then(pl.col(col).fill_null(strategy="forward").over("trading_date"))
-                    .otherwise(pl.col(col))  # Keep original nulls for long streaks
+                    .otherwise(pl.col(col))
                     .alias(col)
                 ])
                 
                 # Clean up temporary columns
-                complete_data = complete_data.drop([f"{col}_is_null", f"{col}_null_streak"])
+                complete_data = complete_data.drop([
+                    f"{col}_has_data", 
+                    f"{col}_prev_has_data", 
+                    f"{col}_next_has_data"
+                ])
+                
+                # DEBUG: Check what happened
+                filled_values = complete_data.select(pl.col(col)).head(20).to_series().to_list()
+                logger.debug(f"After fill {col} values (first 20): {filled_values}")
+                
+                # Check if we accidentally filled market open nulls
+                market_open_nulls = sum(1 for v in filled_values[:5] if v is None)
+                if market_open_nulls < 3:  # Expect at least some nulls at market open
+                    logger.warning(f"SUSPICIOUS: Only {market_open_nulls} nulls in first 5 market open values")
+                    logger.warning("This might indicate data bleeding across market boundaries!")
             
             # Remove temporary date column
             complete_data = complete_data.drop("trading_date")
