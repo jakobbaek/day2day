@@ -503,10 +503,22 @@ class DataPreparator:
         logger.info(f"Creating lags across {len(trading_days)} trading days")
         logger.debug(f"First 5 trading days: {trading_days.head(5).to_series().to_list()}")
         
-        # DEBUG: Check a sample day for lag creation
-        sample_date = trading_days.head(1).to_series().to_list()[0]
-        sample_day_data = result_df.filter(pl.col("trading_date") == sample_date)
-        logger.debug(f"Sample day {sample_date}: {len(sample_day_data)} data points")
+        # DEBUG: Find a day with actual trading data (not all nulls)
+        sample_date = None
+        sample_col = target_columns[0] if target_columns else None
+        
+        for potential_date in trading_days.head(10).to_series().to_list():
+            day_data = result_df.filter(pl.col("trading_date") == potential_date)
+            if sample_col and sample_col in day_data.columns:
+                non_null_count = day_data.select(pl.col(sample_col).is_not_null().sum()).item()
+                if non_null_count > 50:  # Has substantial trading data
+                    sample_date = potential_date
+                    logger.info(f"Found sample day with data: {sample_date} ({non_null_count} non-null values)")
+                    break
+        
+        if sample_date is None:
+            logger.warning("Could not find a trading day with substantial data for debugging")
+            sample_date = trading_days.head(1).to_series().to_list()[0]
         
         total_lag_features = 0
         for lag in lags:
@@ -516,16 +528,20 @@ class DataPreparator:
                         lag_col = f"{col}_lag{lag}"
                         
                         # CRITICAL DEBUG: Check before and after lag creation
-                        if col == target_columns[0] and lag == 1:  # Debug first feature, lag 1
-                            logger.info(f"DEBUG: Creating lag1 for {col}")
+                        if col == target_columns[0] and lag == 1 and sample_date:  # Debug first feature, lag 1
+                            logger.info(f"DEBUG: Creating lag1 for {col} on sample day {sample_date}")
                             
-                            # Check original values at market open
-                            first_day = trading_days.head(1).to_series().to_list()[0]
-                            first_day_data = result_df.filter(pl.col("trading_date") == first_day).sort("datetime")
+                            # Check original values for the day with actual data
+                            sample_day_data = result_df.filter(pl.col("trading_date") == sample_date).sort("datetime")
                             
-                            if len(first_day_data) > 0:
-                                first_values = first_day_data.select(pl.col(col)).head(5).to_series().to_list()
-                                logger.info(f"First day {first_day} original values: {first_values}")
+                            if len(sample_day_data) > 0:
+                                first_values = sample_day_data.select(pl.col(col)).head(10).to_series().to_list()
+                                logger.info(f"Sample day {sample_date} original values (first 10): {first_values}")
+                                
+                                # Also check if this looks like data bleeding
+                                non_null_originals = [v for v in first_values if v is not None]
+                                if len(non_null_originals) > 0:
+                                    logger.info(f"Sample day first non-null values: {non_null_originals[:5]}")
                         
                         # Create lagged features that respect trading day boundaries
                         # This ensures nulls at market open instead of previous day's data
@@ -534,19 +550,30 @@ class DataPreparator:
                         )
                         
                         # CRITICAL DEBUG: Check after lag creation
-                        if col == target_columns[0] and lag == 1:  # Debug first feature, lag 1
-                            first_day_after = result_df.filter(pl.col("trading_date") == first_day).sort("datetime")
-                            lag_values = first_day_after.select(pl.col(lag_col)).head(5).to_series().to_list()
-                            logger.info(f"First day {first_day} lag1 values: {lag_values}")
+                        if col == target_columns[0] and lag == 1 and sample_date:  # Debug first feature, lag 1
+                            sample_day_after = result_df.filter(pl.col("trading_date") == sample_date).sort("datetime")
+                            lag_values = sample_day_after.select(pl.col(lag_col)).head(10).to_series().to_list()
+                            logger.info(f"Sample day {sample_date} lag1 values (first 10): {lag_values}")
                             
-                            # Check for unexpected values (should be mostly null at start)
-                            non_null_count = first_day_after.select(pl.col(lag_col).is_not_null().sum()).item()
-                            expected_non_null = max(0, len(first_day_after) - lag)
-                            logger.info(f"Lag1 non-null count: {non_null_count}, expected: {expected_non_null}")
+                            # Check for data bleeding patterns
+                            non_null_lags = [v for v in lag_values if v is not None]
+                            if len(non_null_lags) > 0:
+                                logger.info(f"Sample day first non-null lag1 values: {non_null_lags[:5]}")
+                                
+                                # Compare lag1 vs original to detect bleeding
+                                original_non_nulls = [v for v in sample_day_after.select(pl.col(col)).head(10).to_series().to_list() if v is not None]
+                                if len(original_non_nulls) > 0 and len(non_null_lags) > 0:
+                                    if abs(non_null_lags[0] - original_non_nulls[0]) > 100:
+                                        logger.error(f"CRITICAL: Large difference between lag1 ({non_null_lags[0]:.2f}) and original ({original_non_nulls[0]:.2f})")
+                                        logger.error("This suggests data bleeding from previous day!")
                             
-                            if non_null_count > expected_non_null + 5:  # Allow some tolerance
-                                logger.error("CRITICAL: Too many non-null lag values at market open!")
-                                logger.error("This indicates data bleeding across trading days!")
+                            # Check null pattern at market open
+                            first_5_nulls = sum(1 for v in lag_values[:5] if v is None)
+                            logger.info(f"Lag1 nulls in first 5 values: {first_5_nulls}/5 (should be at least 1 for proper day trading)")
+                            
+                            if first_5_nulls == 0:
+                                logger.error("CRITICAL: No nulls at market open for lag1 feature!")
+                                logger.error("This indicates data bleeding - lag1 should be null at market open!")
                         
                         total_lag_features += 1
         
