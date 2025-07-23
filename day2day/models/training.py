@@ -110,15 +110,54 @@ class ModelTrainer:
                 logger.warning(f"Found {len(low_var_features)} features with very low variance")
                 logger.warning(f"Low variance features: {low_var_features.head()}")
                 
-            # Debug: Check for constant features
+            # Debug: Check for constant features and feature quality
             constant_features = []
+            low_unique_features = []
+            
             for col in X.columns:
-                if X[col].nunique() <= 1:
+                unique_count = X[col].nunique()
+                if unique_count <= 1:
                     constant_features.append(col)
+                elif unique_count <= 5:  # Very few unique values
+                    low_unique_features.append((col, unique_count))
             
             if constant_features:
-                logger.warning(f"Found {len(constant_features)} constant features: {constant_features[:5]}")
-                logger.warning("Constant features provide no information to the model")
+                logger.error(f"CRITICAL: Found {len(constant_features)} constant features: {constant_features[:5]}")
+                logger.error("Constant features provide no information - this could cause flat predictions!")
+                
+            if low_unique_features:
+                logger.warning(f"Found {len(low_unique_features)} features with very few unique values:")
+                for col, count in low_unique_features[:5]:
+                    logger.warning(f"  {col}: {count} unique values")
+            
+            # Check if most features are just different versions of the same data
+            numeric_features = X.select_dtypes(include=[np.number]).columns
+            if len(numeric_features) > 10:
+                # Sample correlations to see if features are too similar
+                sample_features = numeric_features[:min(20, len(numeric_features))]
+                corr_matrix = X[sample_features].corr()
+                
+                # Count highly correlated pairs
+                high_corr_count = 0
+                for i in range(len(corr_matrix)):
+                    for j in range(i+1, len(corr_matrix)):
+                        if abs(corr_matrix.iloc[i, j]) > 0.95:
+                            high_corr_count += 1
+                
+                if high_corr_count > len(sample_features) // 2:
+                    logger.warning(f"Many features are highly correlated ({high_corr_count} pairs > 0.95)")
+                    logger.warning("This suggests features might be duplicates or very similar")
+                    
+            # Check if non-null features actually have meaningful variation
+            meaningful_features = 0
+            for col in numeric_features[:20]:  # Sample first 20 numeric features
+                non_null_values = X[col].dropna()
+                if len(non_null_values) > 100 and non_null_values.std() > 1e-6:
+                    meaningful_features += 1
+                    
+            if meaningful_features < 5:
+                logger.error(f"CRITICAL: Only {meaningful_features} features have meaningful variation!")
+                logger.error("Most features may be constant or near-constant - this WILL cause flat predictions!")
         else:
             # Remove rows with missing values (for traditional models)
             mask = ~(X.isnull().any(axis=1) | y.isnull())
@@ -197,6 +236,47 @@ class ModelTrainer:
         
         # Train model
         model.train(X_train, y_train)
+        
+        # DEBUG: Check if model actually learned something
+        if hasattr(model, 'model') and hasattr(model.model, 'feature_importances_'):
+            importances = model.model.feature_importances_
+            max_importance = importances.max()
+            num_zero_importance = (importances == 0).sum()
+            
+            logger.info(f"Model training completed: max_importance={max_importance:.6f}")
+            logger.info(f"Features with zero importance: {num_zero_importance}/{len(importances)}")
+            
+            if max_importance < 1e-6:
+                logger.error("CRITICAL: All feature importances are near zero!")
+                logger.error("This means the model found no predictive signal - will cause flat predictions!")
+                
+            elif num_zero_importance > len(importances) * 0.8:
+                logger.warning(f"Most features ({num_zero_importance}/{len(importances)}) have zero importance")
+                logger.warning("Model may be underfitting or features lack predictive power")
+            
+            # Show top features
+            if len(importances) > 0:
+                feature_importance_pairs = list(zip(X_train.columns, importances))
+                feature_importance_pairs.sort(key=lambda x: x[1], reverse=True)
+                logger.info("Top 5 most important features:")
+                for i, (feature, importance) in enumerate(feature_importance_pairs[:5]):
+                    logger.info(f"  {i+1}. {feature}: {importance:.6f}")
+        
+        # Make a quick prediction check
+        try:
+            train_predictions = model.predict(X_train.head(100))
+            pred_std = np.std(train_predictions)
+            pred_range = np.max(train_predictions) - np.min(train_predictions)
+            
+            logger.info(f"Training predictions check: std={pred_std:.6f}, range={pred_range:.6f}")
+            
+            if pred_std < 1e-4:
+                logger.error("CRITICAL: Model predictions on training data are nearly constant!")
+                logger.error(f"Sample predictions: {train_predictions[:10].tolist()}")
+                logger.error("This confirms the model is producing flat predictions!")
+                
+        except Exception as e:
+            logger.warning(f"Could not check training predictions: {e}")
         
         # Store model and config
         self.trained_models[model_name] = model

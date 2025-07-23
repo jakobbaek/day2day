@@ -288,6 +288,11 @@ class Day2DayAPI:
             training_data_title, target_instrument, model_names
         )
         
+        # DIAGNOSTIC: Check for data bleeding across market boundaries
+        self.model_evaluator.create_daily_timeline_diagnostic(
+            training_data_title, target_instrument, model_names
+        )
+        
         self.model_evaluator.create_metrics_comparison(
             training_data_title, target_instrument
         )

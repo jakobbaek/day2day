@@ -248,6 +248,151 @@ class ModelEvaluator:
         
         return fig
     
+    def create_daily_timeline_diagnostic(self, 
+                                       training_data_title: str,
+                                       target_instrument: str,
+                                       model_names: List[str] = None,
+                                       save_plot: bool = True) -> plt.Figure:
+        """
+        Create diagnostic plot showing 6 randomly sampled daily timelines.
+        
+        This helps identify if data is bleeding across market open/close boundaries,
+        which could cause flat predictions.
+        
+        Args:
+            training_data_title: Title of the training data
+            target_instrument: Target instrument
+            model_names: List of model names to plot (None for all)
+            save_plot: Whether to save the plot
+            
+        Returns:
+            Matplotlib figure
+        """
+        logger.info("Creating daily timeline diagnostic plot...")
+        
+        # Load the original processed data to get datetime information
+        data_file = f"{training_data_title}.csv"
+        data_path = settings.get_processed_data_file(data_file)
+        
+        if not data_path.exists():
+            raise FileNotFoundError(f"Processed data file not found: {data_path}")
+        
+        # Load data with datetime
+        df = pd.read_csv(data_path)
+        df['datetime'] = pd.to_datetime(df['datetime'])
+        df['date'] = df['datetime'].dt.date
+        
+        # Get evaluation results for comparison
+        results = self.evaluate_model_suite(training_data_title, target_instrument)
+        
+        if model_names is None:
+            model_names = list(results.keys())
+        
+        # Select 6 random dates with sufficient data
+        daily_counts = df.groupby('date').size()
+        valid_dates = daily_counts[daily_counts >= 50].index.tolist()  # At least 50 data points
+        
+        if len(valid_dates) < 6:
+            logger.warning(f"Only {len(valid_dates)} dates with sufficient data found")
+            sample_dates = valid_dates
+        else:
+            np.random.seed(42)  # Reproducible sampling
+            sample_dates = np.random.choice(valid_dates, 6, replace=False)
+        
+        # Create figure with 2x3 subplots
+        fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+        axes = axes.flatten()
+        
+        # Get the target column for actual values
+        target_col = f"high_{target_instrument}"
+        if target_col not in df.columns:
+            logger.warning(f"Target column {target_col} not found, using 'target' column")
+            target_col = 'target'
+        
+        for i, date in enumerate(sample_dates[:6]):
+            daily_data = df[df['date'] == date].copy()
+            daily_data = daily_data.sort_values('datetime')
+            
+            ax = axes[i]
+            
+            # Plot actual values
+            if target_col in daily_data.columns:
+                actual_values = daily_data[target_col].dropna()
+                actual_times = daily_data.loc[actual_values.index, 'datetime']
+                ax.plot(actual_times, actual_values, 'b-', label='Actual Price', linewidth=2, alpha=0.8)
+            
+            # Plot lagged features to check for day boundary issues
+            lag_features = [col for col in daily_data.columns if 'lag1' in col]
+            if lag_features:
+                sample_lag_col = lag_features[0]  # Use first lag1 feature as example
+                lag_values = daily_data[sample_lag_col].dropna()
+                if len(lag_values) > 0:
+                    lag_times = daily_data.loc[lag_values.index, 'datetime']
+                    ax.plot(lag_times, lag_values, 'r--', label=f'Lag1 Feature', alpha=0.6)
+            
+            # Add predictions if available (sample from test set)
+            if model_names and model_names[0] in results:
+                model_results = results[model_names[0]]
+                # This is a simplified approach - ideally we'd need to map back to original datetimes
+                
+            # Formatting
+            ax.set_title(f'Daily Timeline: {date}', fontsize=12, fontweight='bold')
+            ax.set_xlabel('Time of Day')
+            ax.set_ylabel('Price')
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+            
+            # Rotate x-axis labels for better readability
+            ax.tick_params(axis='x', rotation=45)
+            
+            # Check for suspicious patterns
+            if target_col in daily_data.columns:
+                price_values = daily_data[target_col].dropna()
+                if len(price_values) > 10:
+                    # Check if first value equals last value from previous day (data bleeding)
+                    first_price = price_values.iloc[0]
+                    price_std = price_values.std()
+                    
+                    # Add diagnostic text
+                    ax.text(0.02, 0.98, f'Start: {first_price:.2f}\nStd: {price_std:.4f}', 
+                           transform=ax.transAxes, verticalalignment='top', 
+                           bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8),
+                           fontsize=8)
+                    
+                    # Highlight if price is flat
+                    if price_std < 0.01:
+                        ax.text(0.5, 0.5, 'FLAT DATA!', transform=ax.transAxes, 
+                               ha='center', va='center', fontsize=16, color='red',
+                               bbox=dict(boxstyle='round', facecolor='red', alpha=0.3))
+        
+        # Add overall title
+        fig.suptitle(f'Daily Timeline Diagnostic - {training_data_title}_{target_instrument}\n'
+                    f'Checking for data bleeding across market open/close boundaries', 
+                    fontsize=14, fontweight='bold')
+        
+        plt.tight_layout()
+        
+        if save_plot:
+            suite_name = f"{training_data_title}_{target_instrument}"
+            suite_dir = settings.models_path / suite_name
+            suite_dir.mkdir(exist_ok=True)
+            plot_file = suite_dir / "daily_timeline_diagnostic.png"
+            plt.savefig(plot_file, dpi=300, bbox_inches='tight')
+            logger.info(f"Saved daily timeline diagnostic plot to {plot_file}")
+        
+        # Log diagnostic insights
+        logger.info("Daily timeline diagnostic insights:")
+        for i, date in enumerate(sample_dates[:6]):
+            daily_data = df[df['date'] == date]
+            if target_col in daily_data.columns:
+                price_values = daily_data[target_col].dropna()
+                if len(price_values) > 0:
+                    logger.info(f"  {date}: {len(price_values)} data points, "
+                              f"std={price_values.std():.4f}, "
+                              f"range={price_values.max()-price_values.min():.4f}")
+        
+        return fig
+    
     def create_scatter_plot(self, 
                           training_data_title: str,
                           target_instrument: str,
