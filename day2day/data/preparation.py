@@ -862,21 +862,38 @@ class DataPreparator:
             sample_high_wide = df.select(pl.col(sample_col)).head(10).to_series().to_list()
             logger.info(f"AFTER wide format - sample {sample_col} values: {sample_high_wide}")
             
-            # Check for suspicious patterns (data bleeding indicators)
+            # CRITICAL: Check if we still have data bleeding issue
             non_null_values = df.select(pl.col(sample_col).drop_nulls()).to_series().to_list()
             if len(non_null_values) > 100:
-                first_100 = non_null_values[:100]
-                if len(set(first_100)) < 10:  # Very few unique values
-                    logger.warning(f"SUSPICIOUS: {sample_col} has very few unique values in first 100 non-null entries")
-                    logger.warning(f"Unique values: {list(set(first_100))}")
+                first_20 = non_null_values[:20]
+                logger.info(f"WIDE FORMAT: First 20 non-null {sample_col} values: {first_20}")
                 
-                # Check if values are artificially constant
+                # Check for the 200-300 vs 400-500 pattern
+                if len(first_20) >= 10:
+                    first_5_avg = sum(first_20[:5]) / 5
+                    next_5_avg = sum(first_20[5:10]) / 5
+                    difference = abs(first_5_avg - next_5_avg)
+                    
+                    logger.info(f"First 5 avg: {first_5_avg:.2f}, Next 5 avg: {next_5_avg:.2f}, Diff: {difference:.2f}")
+                    
+                    if difference > 100:
+                        logger.error(f"CRITICAL: Large value jump detected ({difference:.2f})!")
+                        logger.error("This suggests data bleeding is still occurring!")
+                        logger.error(f"Pattern: {first_20[:10]}")
+                    else:
+                        logger.info("✓ No large value jumps detected - data bleeding may be fixed!")
+                
+                # Check overall variation
                 import statistics
-                if len(first_100) > 50:
-                    std_dev = statistics.stdev(first_100)
+                if len(first_20) >= 10:
+                    std_dev = statistics.stdev(first_20)
+                    logger.info(f"Wide format data variation: std={std_dev:.4f}")
+                    
                     if std_dev < 0.1:
                         logger.error(f"CRITICAL: {sample_col} shows artificial flatness (std={std_dev:.6f})")
                         logger.error("This indicates data bleeding during wide format conversion!")
+                    elif std_dev > 10:
+                        logger.info("✓ Good price variation detected - suggests healthy market data!")
         
         # Step 6: Handle price feature type selection (raw vs percentage)
         if use_percentage_features:
