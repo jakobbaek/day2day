@@ -584,6 +584,29 @@ class DataPreparator:
             pl.col(target_column).shift(-horizon).alias("target")
         )
         
+        # CRITICAL DEBUG: Check target variable distribution immediately after creation
+        target_stats = result_df.select([
+            pl.col("target").count().alias("count"),
+            pl.col("target").null_count().alias("nulls"),
+            pl.col("target").std().alias("std"),
+            pl.col("target").min().alias("min"),
+            pl.col("target").max().alias("max"),
+            pl.col("target").mean().alias("mean")
+        ])
+        
+        stats_dict = target_stats.to_dicts()[0]
+        logger.info(f"Target variable after creation: count={stats_dict['count']}, nulls={stats_dict['nulls']}")
+        logger.info(f"Target stats: std={stats_dict['std']:.6f}, range={stats_dict['max']-stats_dict['min']:.6f}")
+        
+        if stats_dict['std'] and stats_dict['std'] < 1e-4:
+            logger.error("CRITICAL: Target variable has very low variance right after creation!")
+            logger.error(f"Source column {target_column} may have constant values")
+            # Sample some values from source column
+            source_sample = result_df.select(pl.col(target_column)).head(10).to_series().to_list()
+            logger.error(f"Source column sample: {source_sample}")
+        elif stats_dict['std'] is None:
+            logger.error("CRITICAL: Target variable std is None - all values may be null!")
+        
         # Add trading eligibility flag instead of removing data
         # This allows evaluation while preventing trading on late-day predictions
         result_df = result_df.with_columns(

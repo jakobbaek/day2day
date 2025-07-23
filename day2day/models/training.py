@@ -59,6 +59,34 @@ class ModelTrainer:
             null_count = X.isnull().sum().sum()
             logger.info(f"Loaded training data (preserving nulls): {len(X)} samples, {len(feature_cols)} features")
             logger.info(f"Null values preserved: {null_count} nulls in feature matrix (important for day trading)")
+            
+            # CRITICAL DEBUG: Check target variable distribution
+            target_std = y.std()
+            target_var = y.var()
+            target_range = y.max() - y.min()
+            logger.info(f"Target variable stats: std={target_std:.6f}, var={target_var:.6f}, range={target_range:.6f}")
+            
+            if target_std < 1e-4:
+                logger.error("CRITICAL: Target variable has very low variance - this WILL cause flat predictions!")
+                logger.error(f"Target sample values: {y.head(10).tolist()}")
+                logger.error("This indicates a data pipeline issue, not a model issue")
+            
+            # Debug: Check feature variance
+            feature_vars = X.var(numeric_only=True)
+            low_var_features = feature_vars[feature_vars < 1e-6]
+            if len(low_var_features) > 0:
+                logger.warning(f"Found {len(low_var_features)} features with very low variance")
+                logger.warning(f"Low variance features: {low_var_features.head()}")
+                
+            # Debug: Check for constant features
+            constant_features = []
+            for col in X.columns:
+                if X[col].nunique() <= 1:
+                    constant_features.append(col)
+            
+            if constant_features:
+                logger.warning(f"Found {len(constant_features)} constant features: {constant_features[:5]}")
+                logger.warning("Constant features provide no information to the model")
         else:
             # Remove rows with missing values (for traditional models)
             mask = ~(X.isnull().any(axis=1) | y.isnull())
@@ -88,6 +116,21 @@ class ModelTrainer:
             split_idx = int(len(X) * (1 - test_size))
             X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
             y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
+            
+            # CRITICAL DEBUG: Check if temporal split is causing flat predictions
+            train_var = y_train.var()
+            test_var = y_test.var()
+            logger.info(f"Train/test target variance: train={train_var:.6f}, test={test_var:.6f}")
+            
+            if test_var < 1e-4:
+                logger.error("CRITICAL: Test set has very low target variance!")
+                logger.error("This means temporal split put all similar data in test set")
+                logger.error(f"Test target range: {y_test.min():.6f} to {y_test.max():.6f}")
+                logger.error(f"Test target sample: {y_test.head(10).tolist()}")
+                
+            if train_var < 1e-4:
+                logger.error("CRITICAL: Train set has very low target variance!")
+                logger.error("Model cannot learn from constant targets")
         else:
             # Random split
             from sklearn.model_selection import train_test_split
