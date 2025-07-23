@@ -159,9 +159,31 @@ class DateTimeStandardizer:
         open_times = daily_global_hours.select("global_day_open").to_series().to_list()
         close_times = daily_global_hours.select("global_day_close").to_series().to_list()
         
+        # DEBUG: Show what times we're seeing in the data
+        logger.debug(f"Sample opening times from data: {open_times[:10]}")
+        logger.debug(f"Sample closing times from data: {close_times[:10]}")
+        
         # Use mode (most common time) or median if mode is not clear
         market_open = self._calculate_typical_time(open_times)
         market_close = self._calculate_typical_time(close_times)
+        
+        # CRITICAL FIX: Danish market hours should be ~7:00-15:00 GMT
+        # If we're getting 5:00-13:00, there's a timezone issue
+        if market_open.hour < 6:
+            logger.error(f"CRITICAL: Inferred market open ({market_open}) too early!")
+            logger.error("Danish market opens around 9:00 CET = 7:00-8:00 GMT")
+            logger.error("This suggests timezone conversion error in raw data or inference")
+            
+            # Apply a correction - shift to more realistic hours
+            from datetime import time
+            corrected_open = time(7, 0)  # 7:00 GMT = 8:00/9:00 CET
+            corrected_close = time(15, 0)  # 15:00 GMT = 16:00/17:00 CET
+            
+            logger.warning(f"APPLYING CORRECTION: Using {corrected_open} - {corrected_close} GMT")
+            logger.warning("This should prevent data bleeding from incorrect early timeline slots")
+            
+            market_open = corrected_open
+            market_close = corrected_close
         
         self.market_hours_cache[cache_key] = (market_open, market_close)
         
