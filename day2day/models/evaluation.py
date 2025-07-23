@@ -226,13 +226,21 @@ class ModelEvaluator:
             test_file = suite_dir / "test_data.csv"
             
             if test_file.exists():
-                test_df = pd.read_csv(test_file)
-                if 'datetime' in test_df.columns and len(test_df) == len(y_true):
-                    # Use actual datetime for x-axis
-                    test_df['datetime'] = pd.to_datetime(test_df['datetime'])
-                    x_values = test_df['datetime']
-                    xlabel = 'Date/Time'
-                else:
+                try:
+                    test_df = pd.read_csv(test_file)
+                    if 'datetime' in test_df.columns and len(test_df) == len(y_true):
+                        # Try to parse datetime for x-axis
+                        test_df['datetime'] = pd.to_datetime(test_df['datetime'])
+                        x_values = test_df['datetime']
+                        xlabel = 'Date/Time'
+                        logger.debug(f"Using datetime x-axis for {model_name} plot")
+                    else:
+                        # Fallback to index
+                        x_values = range(len(y_true))
+                        xlabel = 'Time Steps'
+                        logger.debug(f"Using time steps x-axis for {model_name} plot (datetime unavailable or size mismatch)")
+                except Exception as e:
+                    logger.warning(f"Error loading test data for plot datetime: {e}")
                     # Fallback to index
                     x_values = range(len(y_true))
                     xlabel = 'Time Steps'
@@ -253,13 +261,22 @@ class ModelEvaluator:
             
             # Format x-axis for datetime
             if xlabel == 'Date/Time':
-                ax.tick_params(axis='x', rotation=45)
-                # Show every Nth tick to avoid crowding
-                n_ticks = min(10, len(x_values) // 10)
-                if n_ticks > 0:
-                    tick_indices = range(0, len(x_values), len(x_values) // n_ticks)
-                    ax.set_xticks([x_values.iloc[i] for i in tick_indices])
-                    ax.set_xticklabels([x_values.iloc[i].strftime('%Y-%m-%d %H:%M') for i in tick_indices])
+                try:
+                    ax.tick_params(axis='x', rotation=45)
+                    # Show every Nth tick to avoid crowding
+                    if len(x_values) > 10:
+                        n_ticks = min(10, len(x_values) // 10)
+                        if n_ticks > 0:
+                            step = len(x_values) // n_ticks
+                            tick_indices = range(0, len(x_values), step)
+                            tick_values = [x_values.iloc[i] for i in tick_indices if i < len(x_values)]
+                            tick_labels = [x_values.iloc[i].strftime('%Y-%m-%d %H:%M') for i in tick_indices if i < len(x_values)]
+                            ax.set_xticks(tick_values)
+                            ax.set_xticklabels(tick_labels)
+                except Exception as e:
+                    logger.warning(f"Error formatting datetime x-axis: {e}")
+                    # Keep simple datetime plot without custom ticks
+                    ax.tick_params(axis='x', rotation=45)
         
         plt.tight_layout()
         
@@ -304,8 +321,35 @@ class ModelEvaluator:
         
         # Load test data with datetime
         test_df = pd.read_csv(test_file)
-        test_df['datetime'] = pd.to_datetime(test_df['datetime'])
-        test_df['date'] = test_df['datetime'].dt.date
+        
+        # Check if datetime column exists
+        if 'datetime' not in test_df.columns:
+            logger.warning("No 'datetime' column in test data, falling back to full processed data for diagnostic")
+            # Fallback to the full processed data
+            data_file = f"{training_data_title}.csv"
+            data_path = settings.get_processed_data_file(data_file)
+            
+            if not data_path.exists():
+                raise FileNotFoundError(f"Neither test data nor processed data file found")
+            
+            full_df = pd.read_csv(data_path)
+            if 'datetime' not in full_df.columns:
+                raise ValueError("No datetime column found in either test or processed data")
+            
+            full_df['datetime'] = pd.to_datetime(full_df['datetime'])
+            full_df['date'] = full_df['datetime'].dt.date
+            
+            # Use the last portion of data (approximate test set size)
+            test_set_size = len(test_df)
+            test_df = full_df.tail(test_set_size).copy()
+            logger.info(f"Using last {test_set_size} rows from processed data as test set approximation")
+        else:
+            try:
+                test_df['datetime'] = pd.to_datetime(test_df['datetime'])
+                test_df['date'] = test_df['datetime'].dt.date
+            except Exception as e:
+                logger.error(f"Error parsing datetime column: {e}")
+                raise ValueError(f"Could not parse datetime column: {e}")
         
         logger.info(f"Loaded test data: {len(test_df)} rows spanning {test_df['date'].min()} to {test_df['date'].max()}")
         
