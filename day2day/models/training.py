@@ -369,9 +369,15 @@ class ModelTrainer:
         test_df = X_test.copy()
         test_df['target'] = y_test
         
-        # Include trading_eligible flag if it exists in the original data
+        # Include datetime and trading_eligible from original data for plotting
         data_file = f"{training_data_title}.csv"
         original_df = pd.read_csv(settings.get_processed_data_file(data_file))
+        
+        if 'datetime' in original_df.columns:
+            # Get the datetime values for the test set indices
+            test_df['datetime'] = original_df.loc[X_test.index, 'datetime']
+            logger.info("Included datetime column in test data for plot x-axis")
+        
         if 'trading_eligible' in original_df.columns:
             # Get the trading_eligible values for the test set indices
             test_df['trading_eligible'] = original_df.loc[X_test.index, 'trading_eligible']

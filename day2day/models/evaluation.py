@@ -225,29 +225,33 @@ class ModelEvaluator:
             suite_dir = settings.models_path / suite_name
             test_file = suite_dir / "test_data.csv"
             
+            x_values = None
+            xlabel = 'Time Steps'
+            
             if test_file.exists():
                 try:
                     test_df = pd.read_csv(test_file)
+                    logger.debug(f"Test data columns: {test_df.columns.tolist()}")
+                    logger.debug(f"Test data shape: {test_df.shape}, predictions length: {len(y_true)}")
+                    
                     if 'datetime' in test_df.columns and len(test_df) == len(y_true):
-                        # Try to parse datetime for x-axis
+                        # Parse datetime for x-axis
                         test_df['datetime'] = pd.to_datetime(test_df['datetime'])
                         x_values = test_df['datetime']
                         xlabel = 'Date/Time'
-                        logger.debug(f"Using datetime x-axis for {model_name} plot")
+                        logger.info(f"Successfully loaded datetime x-axis for {model_name} plot ({len(x_values)} points)")
                     else:
-                        # Fallback to index
-                        x_values = range(len(y_true))
-                        xlabel = 'Time Steps'
-                        logger.debug(f"Using time steps x-axis for {model_name} plot (datetime unavailable or size mismatch)")
+                        logger.warning(f"Datetime unavailable: datetime_exists={('datetime' in test_df.columns)}, length_match={len(test_df) == len(y_true)}")
                 except Exception as e:
                     logger.warning(f"Error loading test data for plot datetime: {e}")
-                    # Fallback to index
-                    x_values = range(len(y_true))
-                    xlabel = 'Time Steps'
             else:
-                # Fallback to index
+                logger.warning(f"Test data file not found: {test_file}")
+            
+            # Final fallback to index if datetime loading failed
+            if x_values is None:
                 x_values = range(len(y_true))
                 xlabel = 'Time Steps'
+                logger.info(f"Using time steps x-axis for {model_name} plot")
             
             ax.plot(x_values, y_true, label='Actual', color='blue', linewidth=1.5)
             ax.plot(x_values, y_pred, label='Predicted', color='orange', 
@@ -262,21 +266,35 @@ class ModelEvaluator:
             # Format x-axis for datetime
             if xlabel == 'Date/Time':
                 try:
+                    import matplotlib.dates as mdates
+                    
+                    # Configure datetime formatting
+                    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d\n%H:%M'))
+                    ax.xaxis.set_major_locator(mdates.HourLocator(interval=max(1, len(x_values) // 20)))
                     ax.tick_params(axis='x', rotation=45)
-                    # Show every Nth tick to avoid crowding
-                    if len(x_values) > 10:
-                        n_ticks = min(10, len(x_values) // 10)
-                        if n_ticks > 0:
-                            step = len(x_values) // n_ticks
-                            tick_indices = range(0, len(x_values), step)
-                            tick_values = [x_values.iloc[i] for i in tick_indices if i < len(x_values)]
-                            tick_labels = [x_values.iloc[i].strftime('%Y-%m-%d %H:%M') for i in tick_indices if i < len(x_values)]
-                            ax.set_xticks(tick_values)
-                            ax.set_xticklabels(tick_labels)
+                    
+                    # Ensure proper spacing
+                    plt.setp(ax.xaxis.get_majorticklabels(), ha='right')
+                    
+                    logger.debug(f"Applied datetime formatting to {model_name} plot")
+                    
                 except Exception as e:
                     logger.warning(f"Error formatting datetime x-axis: {e}")
-                    # Keep simple datetime plot without custom ticks
+                    # Fallback: simple datetime plot without custom formatting
                     ax.tick_params(axis='x', rotation=45)
+                    
+                    # Manual tick reduction if too many points
+                    if len(x_values) > 20:
+                        step = len(x_values) // 10
+                        tick_indices = range(0, len(x_values), step)
+                        if hasattr(x_values, 'iloc'):
+                            tick_values = [x_values.iloc[i] for i in tick_indices if i < len(x_values)]
+                            tick_labels = [x_values.iloc[i].strftime('%Y-%m-%d %H:%M') for i in tick_indices if i < len(x_values)]
+                        else:
+                            tick_values = [x_values[i] for i in tick_indices if i < len(x_values)]
+                            tick_labels = [x_values[i].strftime('%Y-%m-%d %H:%M') for i in tick_indices if i < len(x_values)]
+                        ax.set_xticks(tick_values)
+                        ax.set_xticklabels(tick_labels, rotation=45, ha='right')
         
         plt.tight_layout()
         
