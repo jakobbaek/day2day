@@ -166,6 +166,22 @@ class DateTimeStandardizer:
         self.market_hours_cache[cache_key] = (market_open, market_close)
         
         logger.info(f"Inferred global market hours: {market_open} - {market_close} GMT")
+        
+        # CRITICAL DEBUG: Check if these hours make sense
+        hour_diff = (datetime.combine(datetime.today(), market_close) - 
+                    datetime.combine(datetime.today(), market_open)).total_seconds() / 3600
+        logger.info(f"Market session length: {hour_diff:.1f} hours")
+        
+        if hour_diff > 10:
+            logger.error(f"CRITICAL: Market session too long ({hour_diff:.1f} hours)!")
+            logger.error("This will create excessive null slots and may cause data bleeding")
+            logger.error("Danish market typically trades ~8 hours, not 10+")
+            
+        if market_open.hour < 6:
+            logger.warning(f"SUSPICIOUS: Market open very early ({market_open}) - check timezone conversion")
+            
+        if market_close.hour > 18:
+            logger.warning(f"SUSPICIOUS: Market close very late ({market_close}) - check timezone conversion")
         logger.info(f"Based on {len(daily_global_hours)} trading days with sufficient data")
         
         return market_open, market_close

@@ -253,6 +253,42 @@ class DataPreparator:
         for ticker in tickers:
             ticker_df = df.filter(pl.col("ticker") == ticker)
             
+            # CRITICAL DEBUG: Check ticker data before wide format conversion
+            if "high" in ticker_df.columns:
+                logger.debug(f"Wide format: Processing ticker {ticker}")
+                
+                # Check for data bleeding patterns in source data
+                ticker_dates = ticker_df.with_columns(
+                    pl.col("datetime").dt.date().alias("date")
+                ).select("date").unique().sort("date").head(5).to_series().to_list()
+                
+                for check_date in ticker_dates[:2]:  # Check first 2 dates
+                    daily_data = ticker_df.filter(
+                        pl.col("datetime").dt.date() == check_date
+                    ).sort("datetime")
+                    
+                    if len(daily_data) > 0:
+                        high_values = daily_data.select("high").to_series().to_list()
+                        non_null_highs = [v for v in high_values if v is not None]
+                        
+                        if len(non_null_highs) > 10:
+                            first_5_highs = non_null_highs[:5]
+                            last_5_highs = non_null_highs[-5:]
+                            
+                            logger.debug(f"Ticker {ticker} date {check_date}: {len(non_null_highs)} data points")
+                            logger.debug(f"  First 5: {first_5_highs}")
+                            logger.debug(f"  Last 5: {last_5_highs}")
+                            
+                            # Check if first value is suspiciously different from the rest
+                            if len(first_5_highs) >= 2:
+                                first_val = first_5_highs[0]
+                                second_val = first_5_highs[1]
+                                if abs(first_val - second_val) > 50:  # Large jump
+                                    logger.error(f"CRITICAL: Large jump in {ticker} on {check_date}")
+                                    logger.error(f"  First value: {first_val:.2f}, Second: {second_val:.2f}")
+                                    logger.error(f"  Difference: {abs(first_val - second_val):.2f}")
+                                    logger.error("  This suggests data bleeding from previous day!")
+            
             # Rename columns to include ticker
             rename_dict = {col: f"{col}_{ticker}" for col in value_columns}
             ticker_df = ticker_df.select(["datetime"] + value_columns).rename(rename_dict)
