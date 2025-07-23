@@ -220,12 +220,12 @@ class ModelEvaluator:
             # Create timeline plot
             ax = axes[i]
             
-            # Load test data to get actual datetime information
+            # Load datetime info for x-axis labels (but plot using sequential indices)
             suite_name = f"{training_data_title}_{target_instrument}"
             suite_dir = settings.models_path / suite_name
             test_file = suite_dir / "test_data.csv"
             
-            x_values = None
+            datetime_values = None
             xlabel = 'Time Steps'
             
             if test_file.exists():
@@ -235,23 +235,20 @@ class ModelEvaluator:
                     logger.debug(f"Test data shape: {test_df.shape}, predictions length: {len(y_true)}")
                     
                     if 'datetime' in test_df.columns and len(test_df) == len(y_true):
-                        # Parse datetime for x-axis
+                        # Parse datetime for labels (but keep sequential x-values for plotting)
                         test_df['datetime'] = pd.to_datetime(test_df['datetime'])
-                        x_values = test_df['datetime']
+                        datetime_values = test_df['datetime']
                         xlabel = 'Date/Time'
-                        logger.info(f"Successfully loaded datetime x-axis for {model_name} plot ({len(x_values)} points)")
+                        logger.info(f"Successfully loaded datetime for labels on {model_name} plot ({len(datetime_values)} points)")
                     else:
                         logger.warning(f"Datetime unavailable: datetime_exists={('datetime' in test_df.columns)}, length_match={len(test_df) == len(y_true)}")
                 except Exception as e:
-                    logger.warning(f"Error loading test data for plot datetime: {e}")
+                    logger.warning(f"Error loading test data for datetime labels: {e}")
             else:
                 logger.warning(f"Test data file not found: {test_file}")
             
-            # Final fallback to index if datetime loading failed
-            if x_values is None:
-                x_values = range(len(y_true))
-                xlabel = 'Time Steps'
-                logger.info(f"Using time steps x-axis for {model_name} plot")
+            # Always use sequential indices for plotting to maintain line continuity
+            x_values = range(len(y_true))
             
             ax.plot(x_values, y_true, label='Actual', color='blue', linewidth=1.5)
             ax.plot(x_values, y_pred, label='Predicted', color='orange', 
@@ -263,38 +260,36 @@ class ModelEvaluator:
             ax.legend()
             ax.grid(True, alpha=0.3)
             
-            # Format x-axis for datetime
-            if xlabel == 'Date/Time':
+            # Format x-axis with datetime labels if available
+            if xlabel == 'Date/Time' and datetime_values is not None:
                 try:
-                    import matplotlib.dates as mdates
-                    
-                    # Configure datetime formatting
-                    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d\n%H:%M'))
-                    ax.xaxis.set_major_locator(mdates.HourLocator(interval=max(1, len(x_values) // 20)))
-                    ax.tick_params(axis='x', rotation=45)
-                    
-                    # Ensure proper spacing
-                    plt.setp(ax.xaxis.get_majorticklabels(), ha='right')
-                    
-                    logger.debug(f"Applied datetime formatting to {model_name} plot")
+                    # Create datetime labels at regular intervals while keeping sequential x-axis
+                    n_ticks = min(8, len(x_values) // 10) if len(x_values) > 50 else min(5, len(x_values))
+                    if n_ticks > 0:
+                        step = max(1, len(x_values) // n_ticks)
+                        tick_positions = list(range(0, len(x_values), step))
+                        
+                        # Ensure we include the last point
+                        if tick_positions[-1] != len(x_values) - 1:
+                            tick_positions.append(len(x_values) - 1)
+                        
+                        # Get corresponding datetime labels
+                        tick_labels = []
+                        for pos in tick_positions:
+                            if pos < len(datetime_values):
+                                dt = datetime_values.iloc[pos]
+                                tick_labels.append(dt.strftime('%Y-%m-%d\n%H:%M'))
+                        
+                        # Set custom ticks and labels
+                        ax.set_xticks(tick_positions)
+                        ax.set_xticklabels(tick_labels, rotation=45, ha='right', fontsize=8)
+                        
+                        logger.debug(f"Applied datetime labels to {model_name} plot ({len(tick_positions)} ticks)")
                     
                 except Exception as e:
-                    logger.warning(f"Error formatting datetime x-axis: {e}")
-                    # Fallback: simple datetime plot without custom formatting
+                    logger.warning(f"Error formatting datetime labels: {e}")
+                    # Keep default tick formatting
                     ax.tick_params(axis='x', rotation=45)
-                    
-                    # Manual tick reduction if too many points
-                    if len(x_values) > 20:
-                        step = len(x_values) // 10
-                        tick_indices = range(0, len(x_values), step)
-                        if hasattr(x_values, 'iloc'):
-                            tick_values = [x_values.iloc[i] for i in tick_indices if i < len(x_values)]
-                            tick_labels = [x_values.iloc[i].strftime('%Y-%m-%d %H:%M') for i in tick_indices if i < len(x_values)]
-                        else:
-                            tick_values = [x_values[i] for i in tick_indices if i < len(x_values)]
-                            tick_labels = [x_values[i].strftime('%Y-%m-%d %H:%M') for i in tick_indices if i < len(x_values)]
-                        ax.set_xticks(tick_values)
-                        ax.set_xticklabels(tick_labels, rotation=45, ha='right')
         
         plt.tight_layout()
         
