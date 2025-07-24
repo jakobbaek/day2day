@@ -105,7 +105,7 @@ class Day2DayAPI:
                             target_instrument: str,
                             target_price_type: str = "high",
                             standardize_datetime: bool = True,
-                            exclude_last_hours: float = 2.0,
+                            exclude_last_hours: float = 0.0,
                             **kwargs) -> str:
         """
         Prepare training data for model training with enhanced datetime standardization.

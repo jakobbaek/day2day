@@ -725,7 +725,7 @@ class DataPreparator:
     def create_target_variable(self, df: pl.DataFrame, 
                              target_column: str,
                              horizon: int = None,
-                             exclude_last_hours: float = 2.0) -> pl.DataFrame:
+                             exclude_last_hours: float = 0.0) -> pl.DataFrame:
         """
         Create target variable for prediction.
         
@@ -870,7 +870,7 @@ class DataPreparator:
                             max_lag: int = 12,
                             min_daily_observations: int = 25,
                             volume_fraction: float = 1.0,
-                            exclude_last_hours: float = 2.0) -> str:
+                            exclude_last_hours: float = 0.0) -> str:
         """
         Prepare training data according to specifications.
         
