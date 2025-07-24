@@ -1308,7 +1308,7 @@ class DataPreparator:
                 logger.warning(f"    → This prediction looks for data at {target_time.strftime('%H:%M:%S')}")
                 
                 # Check if the target time data exists
-                target_time_data = sample_after.filter(pl.col("datetime").dt.time() == target_time_module.time())
+                target_time_data = sample_after.filter(pl.col("datetime").dt.time() == target_time.time())
                 if len(target_time_data) > 0:
                     target_value = target_time_data.select(target_column).item()
                     logger.warning(f"    → Data at target time: {target_value}")
