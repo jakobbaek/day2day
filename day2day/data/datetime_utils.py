@@ -63,31 +63,59 @@ class DateTimeStandardizer:
         Convert Danish timezone (CET/CEST) to GMT.
         
         Args:
-            dt: Datetime in Danish timezone
+            dt: Datetime in Danish timezone (or already GMT)
             
         Returns:
             Datetime in GMT
         """
         if dt is None:
             return None
+        
+        # CRITICAL FIX: Check if data is already in GMT by examining market hours
+        # If hour is between 7-15, it's already GMT (Danish market 8-16 CET = 7-15 GMT)
+        # If hour is between 8-16, it's Danish time and needs conversion
+        hour = dt.hour
+        
+        if 7 <= hour <= 15:
+            # Data appears to already be in GMT timezone
+            # Danish market runs 8-16 CET which equals 7-15 GMT
+            logger.debug(f"Data appears already in GMT (hour {hour}), skipping conversion")
+            return dt
+        elif 8 <= hour <= 16:
+            # Data appears to be in Danish time, convert to GMT
+            logger.debug(f"Data appears in Danish time (hour {hour}), converting to GMT")
             
-        # Simple conversion assuming CET (UTC+1) for winter, CEST (UTC+2) for summer
-        # DST in Europe: last Sunday in March to last Sunday in October
-        year = dt.year
-        
-        # Calculate DST boundaries
-        march_last_sunday = self._last_sunday_of_month(year, 3)
-        october_last_sunday = self._last_sunday_of_month(year, 10)
-        
-        # Check if in daylight saving time
-        if march_last_sunday <= dt.replace(tzinfo=None) < october_last_sunday:
-            # CEST (UTC+2)
-            gmt_dt = dt - timedelta(hours=2)
+            # Simple conversion assuming CET (UTC+1) for winter, CEST (UTC+2) for summer
+            # DST in Europe: last Sunday in March to last Sunday in October
+            year = dt.year
+            
+            # Calculate DST boundaries
+            march_last_sunday = self._last_sunday_of_month(year, 3)
+            october_last_sunday = self._last_sunday_of_month(year, 10)
+            
+            # Check if in daylight saving time
+            if march_last_sunday <= dt.replace(tzinfo=None) < october_last_sunday:
+                # CEST (UTC+2)
+                gmt_dt = dt - timedelta(hours=2)
+            else:
+                # CET (UTC+1)
+                gmt_dt = dt - timedelta(hours=1)
+            
+            return gmt_dt
         else:
-            # CET (UTC+1)
-            gmt_dt = dt - timedelta(hours=1)
-        
-        return gmt_dt
+            # Hour outside normal market range - this needs investigation
+            logger.warning(f"Unusual market hour {hour} detected - applying default conversion")
+            # Apply default conversion
+            year = dt.year
+            march_last_sunday = self._last_sunday_of_month(year, 3)
+            october_last_sunday = self._last_sunday_of_month(year, 10)
+            
+            if march_last_sunday <= dt.replace(tzinfo=None) < october_last_sunday:
+                gmt_dt = dt - timedelta(hours=2)
+            else:
+                gmt_dt = dt - timedelta(hours=1)
+            
+            return gmt_dt
     
     def _last_sunday_of_month(self, year: int, month: int) -> datetime:
         """Find the last Sunday of a given month."""
