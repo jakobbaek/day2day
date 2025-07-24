@@ -225,6 +225,87 @@ class DateTimeStandardizer:
         
         return time(hours, minutes)
     
+    def infer_instrument_specific_hours(self, df: pl.DataFrame, ticker: str) -> Tuple[time, time]:
+        """
+        Infer market hours specific to an individual instrument.
+        
+        This prevents creating unnecessary null gaps for instruments that may trade
+        shorter hours than the global market session.
+        
+        Args:
+            df: DataFrame with market data for all instruments
+            ticker: Specific ticker to analyze
+            
+        Returns:
+            Tuple of (instrument_open_time, instrument_close_time)
+        """
+        cache_key = f"instrument_hours_{ticker}"
+        if cache_key in self.market_hours_cache:
+            return self.market_hours_cache[cache_key]
+        
+        logger.info(f"Inferring instrument-specific market hours for {ticker}")
+        
+        # Filter data for this specific instrument
+        ticker_data = df.filter(pl.col("ticker") == ticker)
+        
+        if ticker_data.is_empty():
+            # Fallback to global market hours
+            logger.warning(f"No data found for {ticker}, using global market hours")
+            return self.infer_market_hours(df, ticker)
+        
+        # Extract time and date components for this instrument only
+        df_with_time = ticker_data.with_columns([
+            pl.col("datetime").dt.time().alias("time_only"),
+            pl.col("datetime").dt.date().alias("date_only")
+        ])
+        
+        # Group by date and find min/max times for this instrument each day
+        daily_instrument_hours = (df_with_time
+            .group_by("date_only")
+            .agg([
+                pl.col("time_only").min().alias("instrument_day_open"),
+                pl.col("time_only").max().alias("instrument_day_close"),
+                pl.col("time_only").count().alias("observations")
+            ])
+            .filter(pl.col("observations") > 10)  # At least 10 observations per day
+        )
+        
+        if daily_instrument_hours.is_empty():
+            logger.warning(f"Insufficient daily data for {ticker}, using global market hours")
+            return self.infer_market_hours(df, ticker)
+        
+        # Calculate typical opening and closing times for this instrument
+        open_times = daily_instrument_hours.select("instrument_day_open").to_series().to_list()
+        close_times = daily_instrument_hours.select("instrument_day_close").to_series().to_list()
+        
+        instrument_open = self._calculate_typical_time(open_times)
+        instrument_close = self._calculate_typical_time(close_times)
+        
+        # Ensure reasonable bounds (use global hours as constraints)
+        global_open, global_close = self.infer_market_hours(df)
+        
+        # Instrument hours should be within global market session
+        if instrument_open < global_open:
+            instrument_open = global_open
+        if instrument_close > global_close:
+            instrument_close = global_close
+        
+        self.market_hours_cache[cache_key] = (instrument_open, instrument_close)
+        
+        logger.info(f"Instrument-specific hours for {ticker}: {instrument_open} - {instrument_close}")
+        
+        # Check if this instrument trades shorter hours than global market
+        session_length = (datetime.combine(datetime.today(), instrument_close) - 
+                         datetime.combine(datetime.today(), instrument_open)).total_seconds() / 3600
+        global_length = (datetime.combine(datetime.today(), global_close) - 
+                        datetime.combine(datetime.today(), global_open)).total_seconds() / 3600
+        
+        if session_length < global_length - 1:  # More than 1 hour shorter
+            logger.info(f"Note: {ticker} trades {session_length:.1f}h vs global {global_length:.1f}h")
+            logger.info("This will prevent unnecessary null gaps in the timeline")
+            
+        return instrument_open, instrument_close
+    
     def create_complete_timeline(self, df: pl.DataFrame, ticker: str) -> pl.DataFrame:
         """
         Create a complete 1-minute timeline for market hours and fill missing values.
@@ -238,8 +319,9 @@ class DateTimeStandardizer:
         """
         logger.info(f"Creating complete timeline for {ticker}")
         
-        # Get market hours
-        market_open, market_close = self.infer_market_hours(df, ticker)
+        # Get instrument-specific market hours instead of global hours
+        # This prevents creating unnecessary null gaps for instruments that trade shorter hours
+        market_open, market_close = self.infer_instrument_specific_hours(df, ticker)
         
         # Get date range from data
         ticker_data = df.filter(pl.col("ticker") == ticker)
