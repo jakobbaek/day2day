@@ -3,9 +3,9 @@
 import polars as pl
 import pandas as pd
 import numpy as np
-import time
+import time as time_module
 from typing import List, Dict, Any, Optional, Tuple
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 from pathlib import Path
 import logging
 from ..config.settings import settings
@@ -20,6 +20,12 @@ class DataPreparator:
         self.settings = settings
         self.prediction_horizon = settings.prediction_horizon_minutes
         self.datetime_standardizer = DateTimeStandardizer()
+        
+        # DEBUG: Show actual settings values
+        logger.info(f"DataPreparator initialized with:")
+        logger.info(f"  prediction_horizon_hours: {settings.prediction_horizon_hours}")
+        logger.info(f"  prediction_horizon_minutes: {settings.prediction_horizon_minutes}")
+        logger.info(f"  self.prediction_horizon: {self.prediction_horizon}")
     
     def load_raw_data(self, filename: str, standardize_datetime: bool = True) -> pl.DataFrame:
         """
@@ -503,7 +509,7 @@ class DataPreparator:
             # Calculate min_periods for holiday gap handling
             min_periods = max(1, days // 3) if days > 10 else max(1, days // 2)
             logger.info(f"Processing {period_name} period ({days} days lookback, min_periods={min_periods} for holiday gaps)")
-            period_start = time.time()
+            period_start = time_module.time()
             
             # Step 1: Create daily aggregates for ALL instruments at once
             logger.info(f"Calculating daily means for all target columns")
@@ -578,7 +584,7 @@ class DataPreparator:
             result_df = result_df.join(daily_features, on="date", how="left")
             
             features_added = len([col for col in target_columns if col != "datetime"])
-            logger.info(f"✓ {period_name} period completed in {time.time() - period_start:.2f}s - Added {features_added} features")
+            logger.info(f"✓ {period_name} period completed in {time_module.time() - period_start:.2f}s - Added {features_added} features")
         
         # Remove temporary date column
         result_df = result_df.drop("date")
@@ -744,6 +750,12 @@ class DataPreparator:
         """
         if horizon is None:
             horizon = self.prediction_horizon
+            
+        # DEBUG: Show where horizon value comes from
+        logger.info(f"DEBUG: Target creation using horizon={horizon}")
+        logger.info(f"  Came from: {'parameter' if horizon != self.prediction_horizon else 'self.prediction_horizon'}")
+        logger.info(f"  self.prediction_horizon = {self.prediction_horizon}")
+        logger.info(f"  settings.prediction_horizon_minutes = {self.settings.prediction_horizon_minutes}")
         
         result_df = df.clone()
         
@@ -785,9 +797,45 @@ class DataPreparator:
         logger.info(f"Creating target variable with horizon={horizon} time steps ({horizon/60:.1f} hours)")
         logger.info(f"This means predicting {horizon} minutes into the future")
         
+        # DEBUG: Check DataFrame structure before shift
+        logger.info("DEBUG: Checking DataFrame structure before shift operation...")
+        df_size = len(result_df)
+        datetime_range = result_df.select([
+            pl.col("datetime").min().alias("min_dt"),
+            pl.col("datetime").max().alias("max_dt")
+        ]).to_dicts()[0]
+        logger.info(f"DataFrame size: {df_size} rows")
+        logger.info(f"DateTime range: {datetime_range['min_dt']} to {datetime_range['max_dt']}")
+        
+        # Check for gaps in datetime sequence
+        result_df_sorted = result_df.sort("datetime")
+        time_diffs = result_df_sorted.select([
+            pl.col("datetime").diff().dt.total_minutes().alias("time_diff")
+        ]).drop_nulls()
+        
+        large_gaps = time_diffs.filter(pl.col("time_diff") > 1)
+        if len(large_gaps) > 0:
+            logger.warning(f"Found {len(large_gaps)} time gaps > 1 minute in DataFrame")
+            logger.warning("This could cause shift() operation to fail!")
+        else:
+            logger.info("DateTime sequence appears continuous (1-minute intervals)")
+        
+        # Perform the shift operation
         result_df = result_df.with_columns(
             pl.col(target_column).shift(-horizon).alias("target")
         )
+        
+        # DEBUG: Verify shift worked
+        shift_test = result_df.filter(
+            pl.col("datetime").dt.time().is_between(time(12, 55), time(13, 5))
+        ).select(["datetime", target_column, "target"]).sort("datetime")
+        
+        logger.info("DEBUG: Sample of shift operation around problematic times:")
+        for row in shift_test.head(10).iter_rows(named=True):
+            dt = row['datetime']
+            orig = row[target_column]
+            tgt = row['target']
+            logger.info(f"  {dt.strftime('%H:%M:%S')}: original={orig}, target={tgt}")
         
         # CRITICAL DEBUG: Check target variable distribution immediately after creation
         target_stats = result_df.select([
@@ -901,41 +949,41 @@ class DataPreparator:
             Path to output file
         """
         logger.info(f"=== STARTING DATA PREPARATION: {output_title} ===")
-        start_time = time.time()
+        start_time = time_module.time()
         
         # Step 1: Load raw data WITHOUT datetime standardization first
         logger.info("Step 1/9: Loading raw data (without standardization for volume filtering)...")
-        step_start = time.time()
+        step_start = time_module.time()
         df = self.load_raw_data(raw_data_file, standardize_datetime=False)
-        logger.info(f"✓ Step 1 completed in {time.time() - step_start:.2f}s - Loaded {len(df)} rows, {len(df.columns)} columns")
+        logger.info(f"✓ Step 1 completed in {time_module.time() - step_start:.2f}s - Loaded {len(df)} rows, {len(df.columns)} columns")
         
         # Step 2: Filter by trading volume BEFORE standardization (critical for accurate volume assessment)
         if volume_fraction < 1.0:
             logger.info(f"Step 2/9: Filtering by trading volume (top {volume_fraction*100:.1f}%) - BEFORE standardization...")
-            step_start = time.time()
+            step_start = time_module.time()
             df = self.filter_by_trading_volume(df, volume_fraction)
-            logger.info(f"✓ Step 2 completed in {time.time() - step_start:.2f}s - Reduced to {len(df)} rows")
+            logger.info(f"✓ Step 2 completed in {time_module.time() - step_start:.2f}s - Reduced to {len(df)} rows")
         else:
             logger.info("Step 2/9: Skipping trading volume filter (volume_fraction=1.0)")
         
         # Step 3: NOW standardize datetime with filtered instruments
         logger.info("Step 3/9: Standardizing datetime and creating complete timeline...")
-        step_start = time.time()
+        step_start = time_module.time()
         df = self.datetime_standardizer.standardize_all_instruments(df)
-        logger.info(f"✓ Step 3 completed in {time.time() - step_start:.2f}s - Standardized {len(df)} rows, {len(df.columns)} columns")
+        logger.info(f"✓ Step 3 completed in {time_module.time() - step_start:.2f}s - Standardized {len(df)} rows, {len(df.columns)} columns")
         
         # Step 4: Filter selected instruments
         if selected_instruments:
             logger.info(f"Step 4/9: Filtering selected instruments ({len(selected_instruments)} instruments)...")
-            step_start = time.time()
+            step_start = time_module.time()
             df = df.filter(pl.col("ticker").is_in(selected_instruments))
-            logger.info(f"✓ Step 4 completed in {time.time() - step_start:.2f}s - Reduced to {len(df)} rows")
+            logger.info(f"✓ Step 4 completed in {time_module.time() - step_start:.2f}s - Reduced to {len(df)} rows")
         else:
             logger.info("Step 4/9: Skipping instrument selection (using all instruments)")
         
         # Step 5: Convert to wide format
         logger.info("Step 5/9: Converting to wide format...")
-        step_start = time.time()
+        step_start = time_module.time()
         value_columns = ["high", "low", "open", "close"]
         
         # DEBUG: Check data before wide format conversion
@@ -944,7 +992,7 @@ class DataPreparator:
             logger.info(f"BEFORE wide format - sample high values: {sample_high}")
         
         df = self.create_wide_format(df, value_columns)
-        logger.info(f"✓ Step 5 completed in {time.time() - step_start:.2f}s - Wide format: {len(df)} rows, {len(df.columns)} columns")
+        logger.info(f"✓ Step 5 completed in {time_module.time() - step_start:.2f}s - Wide format: {len(df)} rows, {len(df.columns)} columns")
         
         # DEBUG: Check data after wide format conversion
         high_cols = [col for col in df.columns if col.startswith("high_")]
@@ -989,7 +1037,7 @@ class DataPreparator:
         # Step 6: Handle price feature type selection (raw vs percentage)
         if use_percentage_features:
             logger.info("Step 6/9: Converting raw prices to percentage features...")
-            step_start = time.time()
+            step_start = time_module.time()
             
             # Calculate percentage features (this adds _pct columns)
             # Try previous_day_close method first, fallback to previous_value if it fails
@@ -1054,7 +1102,7 @@ class DataPreparator:
                     logger.warning(f"DEBUG: Expected _pct column {pct_col} not found for {col}")
             
             logger.info(f"DEBUG: Made {replacements_made} successful replacements out of {len(original_price_columns)} price columns")
-            logger.info(f"✓ Step 6 completed in {time.time() - step_start:.2f}s - Converted to percentage features: {len(df.columns)} columns")
+            logger.info(f"✓ Step 6 completed in {time_module.time() - step_start:.2f}s - Converted to percentage features: {len(df.columns)} columns")
             logger.info("Price columns now contain percentage changes (same column names)")
         else:
             logger.info("Step 6/9: Using raw prices (default)")
@@ -1063,27 +1111,27 @@ class DataPreparator:
         # Step 7: Add historical features
         if add_historical_means:
             logger.info("Step 7/9: Adding historical mean features...")
-            step_start = time.time()
+            step_start = time_module.time()
             df = self.add_historical_features(df)
-            logger.info(f"✓ Step 7 completed in {time.time() - step_start:.2f}s - Added historical features: {len(df.columns)} columns")
+            logger.info(f"✓ Step 7 completed in {time_module.time() - step_start:.2f}s - Added historical features: {len(df.columns)} columns")
         else:
             logger.info("Step 7/9: Skipping historical features")
         
         # Step 8: Create lagged features
         logger.info(f"Step 8/9: Creating lagged features (max_lag={max_lag})...")
-        step_start = time.time()
+        step_start = time_module.time()
         df = self.create_lagged_features(df, max_lag=max_lag)
-        logger.info(f"✓ Step 8 completed in {time.time() - step_start:.2f}s - Added lagged features: {len(df.columns)} columns")
+        logger.info(f"✓ Step 8 completed in {time_module.time() - step_start:.2f}s - Added lagged features: {len(df.columns)} columns")
         
         # Add time features
         logger.info("Step 8.5/9: Adding time-based features...")
-        step_start = time.time()
+        step_start = time_module.time()
         df = self.add_time_features(df)
-        logger.info(f"✓ Step 8.5 completed in {time.time() - step_start:.2f}s - Added time features: {len(df.columns)} columns")
+        logger.info(f"✓ Step 8.5 completed in {time_module.time() - step_start:.2f}s - Added time features: {len(df.columns)} columns")
         
         # Step 9: Create target variable and finalize
         logger.info("Step 9/9: Creating target variable and finalizing...")
-        step_start = time.time()
+        step_start = time_module.time()
         
         # Create target variable - always use high price as per specifications
         target_price_type = "high"  # Force high price as target
@@ -1260,7 +1308,7 @@ class DataPreparator:
                 logger.warning(f"    → This prediction looks for data at {target_time.strftime('%H:%M:%S')}")
                 
                 # Check if the target time data exists
-                target_time_data = sample_after.filter(pl.col("datetime").dt.time() == target_time.time())
+                target_time_data = sample_after.filter(pl.col("datetime").dt.time() == target_time_module.time())
                 if len(target_time_data) > 0:
                     target_value = target_time_data.select(target_column).item()
                     logger.warning(f"    → Data at target time: {target_value}")
@@ -1287,9 +1335,9 @@ class DataPreparator:
         output_path = settings.get_processed_data_file(output_file)
         
         df.write_csv(output_path)
-        logger.info(f"✓ Step 9 completed in {time.time() - step_start:.2f}s - Saved to {output_path}")
+        logger.info(f"✓ Step 9 completed in {time_module.time() - step_start:.2f}s - Saved to {output_path}")
         
-        total_time = time.time() - start_time
+        total_time = time_module.time() - start_time
         logger.info(f"=== DATA PREPARATION COMPLETED in {total_time:.2f}s ===")
         logger.info(f"Final dataset: {len(df)} rows, {len(df.columns)} columns")
         
