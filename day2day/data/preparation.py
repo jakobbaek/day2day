@@ -1201,7 +1201,28 @@ class DataPreparator:
         
         # DEBUG: Check data AFTER target creation
         logger.info("=== DEBUGGING AFTER TARGET CREATION ===")
-        sample_date = df.select(pl.col("datetime").dt.date().unique()).head(1).to_series().to_list()[0]
+        
+        # Use the same date selection logic as before to ensure we have data
+        available_dates = df.select(pl.col("datetime").dt.date().unique()).sort("datetime").to_series().to_list()
+        debug_dates = [d for d in available_dates if d.year == 2023 and d.month == 12 and d.day >= 28]
+        if not debug_dates:
+            debug_dates = available_dates[-3:]  # Use last 3 dates as fallback
+        
+        # Find a date with actual target data
+        sample_date = None
+        for test_date in debug_dates[:3]:
+            test_data = df.filter(pl.col("datetime").dt.date() == test_date)
+            if len(test_data) > 0:
+                target_count = test_data.select(pl.col("target").is_not_null().sum()).item()
+                if target_count > 0:
+                    sample_date = test_date
+                    logger.info(f"Using date {sample_date} for post-target debugging ({target_count} target values)")
+                    break
+                    
+        if sample_date is None:
+            sample_date = debug_dates[0]  # Fallback to first available date
+            logger.warning(f"No target data found, using {sample_date} anyway")
+        
         sample_after = df.filter(pl.col("datetime").dt.date() == sample_date).sort("datetime")
         
         # Check target variable distribution
