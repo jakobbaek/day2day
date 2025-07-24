@@ -215,7 +215,7 @@ class ModelTrainer:
     
     def train_model(self, model_type: str, model_name: str, 
                    X_train: pd.DataFrame, y_train: pd.Series,
-                   **model_params) -> BaseModel:
+                   verbose: bool = False, **model_params) -> BaseModel:
         """
         Train a single model.
         
@@ -224,12 +224,42 @@ class ModelTrainer:
             model_name: Name for the model
             X_train: Training features
             y_train: Training target
+            verbose: Whether to print detailed parameter information
             **model_params: Model-specific parameters
             
         Returns:
             Trained model
         """
         logger.info(f"Training {model_type} model: {model_name}")
+        
+        # Log detailed parameters if verbose mode is enabled
+        if verbose:
+            logger.info(f"📋 Model Configuration Details for {model_name}:")
+            logger.info(f"  Model Type: {model_type}")
+            logger.info(f"  Training Data Shape: {X_train.shape}")
+            logger.info(f"  Target Values: {len(y_train)} samples")
+            logger.info(f"  Target Range: {y_train.min():.6f} to {y_train.max():.6f}")
+            logger.info(f"  Target Std: {y_train.std():.6f}")
+            
+            if model_params:
+                logger.info(f"  Model Parameters:")
+                for param_name, param_value in sorted(model_params.items()):
+                    logger.info(f"    {param_name}: {param_value}")
+            else:
+                logger.info(f"  Model Parameters: Using defaults")
+            
+            # Show feature info
+            logger.info(f"  Feature Count: {len(X_train.columns)}")
+            if len(X_train.columns) <= 10:
+                logger.info(f"  Features: {list(X_train.columns)}")
+            else:
+                logger.info(f"  Sample Features: {list(X_train.columns[:5])} ... {list(X_train.columns[-3:])}")
+            
+            # Check for null values
+            null_count = X_train.isnull().sum().sum()
+            total_cells = len(X_train) * len(X_train.columns)
+            null_percentage = (null_count / total_cells) * 100
+            logger.info(f"  Null Values: {null_count:,} / {total_cells:,} cells ({null_percentage:.2f}%)")
         
         # Create model
         model = create_model(model_type, name=model_name, **model_params)
@@ -243,8 +273,21 @@ class ModelTrainer:
             max_importance = importances.max()
             num_zero_importance = (importances == 0).sum()
             
-            logger.info(f"Model training completed: max_importance={max_importance:.6f}")
-            logger.info(f"Features with zero importance: {num_zero_importance}/{len(importances)}")
+            if verbose:
+                logger.info(f"📈 Post-Training Model Analysis for {model_name}:")
+                logger.info(f"  Max Feature Importance: {max_importance:.6f}")
+                logger.info(f"  Zero Importance Features: {num_zero_importance}/{len(importances)} ({num_zero_importance/len(importances)*100:.1f}%)")
+                
+                # Show importance distribution
+                importance_stats = {
+                    'mean': importances.mean(),
+                    'std': importances.std(),
+                    'median': np.median(importances)
+                }
+                logger.info(f"  Importance Statistics: mean={importance_stats['mean']:.6f}, std={importance_stats['std']:.6f}, median={importance_stats['median']:.6f}")
+            else:
+                logger.info(f"Model training completed: max_importance={max_importance:.6f}")
+                logger.info(f"Features with zero importance: {num_zero_importance}/{len(importances)}")
             
             if max_importance < 1e-6:
                 logger.error("CRITICAL: All feature importances are near zero!")
@@ -258,17 +301,42 @@ class ModelTrainer:
             if len(importances) > 0:
                 feature_importance_pairs = list(zip(X_train.columns, importances))
                 feature_importance_pairs.sort(key=lambda x: x[1], reverse=True)
-                logger.info("Top 5 most important features:")
-                for i, (feature, importance) in enumerate(feature_importance_pairs[:5]):
-                    logger.info(f"  {i+1}. {feature}: {importance:.6f}")
+                
+                if verbose:
+                    logger.info(f"  Top 10 Most Important Features:")
+                    for i, (feature, importance) in enumerate(feature_importance_pairs[:10]):
+                        logger.info(f"    {i+1:2d}. {feature:<40}: {importance:.6f}")
+                else:
+                    logger.info("Top 5 most important features:")
+                    for i, (feature, importance) in enumerate(feature_importance_pairs[:5]):
+                        logger.info(f"  {i+1}. {feature}: {importance:.6f}")
         
         # Make a quick prediction check
         try:
-            train_predictions = model.predict(X_train.head(100))
+            sample_X = X_train.head(100)
+            train_predictions = model.predict(sample_X)
             pred_std = np.std(train_predictions)
             pred_range = np.max(train_predictions) - np.min(train_predictions)
+            pred_mean = np.mean(train_predictions)
             
-            logger.info(f"Training predictions check: std={pred_std:.6f}, range={pred_range:.6f}")
+            if verbose:
+                logger.info(f"🔍 Training Predictions Check for {model_name}:")
+                logger.info(f"  Sample Size: {len(train_predictions)} predictions")
+                logger.info(f"  Prediction Mean: {pred_mean:.6f}")
+                logger.info(f"  Prediction Std: {pred_std:.6f}")
+                logger.info(f"  Prediction Range: {pred_range:.6f} ({np.min(train_predictions):.6f} to {np.max(train_predictions):.6f})")
+                
+                # Compare with target statistics
+                sample_y = y_train.head(100)
+                logger.info(f"  Target Mean (same sample): {sample_y.mean():.6f}")
+                logger.info(f"  Target Std (same sample): {sample_y.std():.6f}")
+                
+                # Show sample predictions vs targets
+                logger.info(f"  Sample Predictions vs Targets (first 5):")
+                for i in range(min(5, len(train_predictions))):
+                    logger.info(f"    Pred: {train_predictions[i]:.6f}, Target: {sample_y.iloc[i]:.6f}")
+            else:
+                logger.info(f"Training predictions check: std={pred_std:.6f}, range={pred_range:.6f}")
             
             if pred_std < 1e-4:
                 logger.error("CRITICAL: Model predictions on training data are nearly constant!")
@@ -277,6 +345,9 @@ class ModelTrainer:
                 
         except Exception as e:
             logger.warning(f"Could not check training predictions: {e}")
+            if verbose:
+                import traceback
+                logger.warning(f"Prediction check error details: {traceback.format_exc()}")
         
         # Store model and config
         self.trained_models[model_name] = model
@@ -293,7 +364,8 @@ class ModelTrainer:
                          target_instrument: str,
                          model_configs: Dict[str, Dict[str, Any]],
                          test_size: float = 0.2,
-                         split_method: str = 'temporal') -> Dict[str, BaseModel]:
+                         split_method: str = 'temporal',
+                         verbose: bool = False) -> Dict[str, BaseModel]:
         """
         Train a suite of models.
         
@@ -305,12 +377,22 @@ class ModelTrainer:
             model_configs: Dictionary of model configurations
             test_size: Test set size
             split_method: Method for train/test split
+            verbose: Whether to print detailed parameter information for each model
             
         Returns:
             Dictionary of trained models
         """
         logger.info(f"Training model suite for {training_data_title}")
         logger.info(f"Target prediction: HIGH price of {target_instrument} (as per specifications)")
+        
+        if verbose:
+            logger.info(f"🔧 Training Suite Configuration:")
+            logger.info(f"  Suite Name: {training_data_title}_{target_instrument}")
+            logger.info(f"  Test Size: {test_size} ({test_size*100:.1f}%)")
+            logger.info(f"  Split Method: {split_method}")
+            logger.info(f"  Models to Train: {len(model_configs)}")
+            for i, (name, config) in enumerate(model_configs.items(), 1):
+                logger.info(f"    {i}. {name} ({config['type']})")
         
         # Load training data
         data_file = f"{training_data_title}.csv"
@@ -321,25 +403,54 @@ class ModelTrainer:
             X, y, test_size=test_size, method=split_method
         )
         
+        if verbose:
+            logger.info(f"📊 Training Data Summary:")
+            logger.info(f"  Total Samples: {len(X)} → Train: {len(X_train)}, Test: {len(X_test)}")
+            logger.info(f"  Feature Dimensions: {X.shape[1]} features")
+            logger.info(f"  Target Statistics: mean={y.mean():.6f}, std={y.std():.6f}")
+        
         # Train each model
         trained_models = {}
         
-        for model_name, config in model_configs.items():
+        for i, (model_name, config) in enumerate(model_configs.items(), 1):
             model_type = config['type']
             model_params = config.get('params', {})
             
+            if verbose:
+                logger.info(f"\n🚀 Training Model {i}/{len(model_configs)}: {model_name}")
+            
             try:
                 model = self.train_model(
-                    model_type, model_name, X_train, y_train, **model_params
+                    model_type, model_name, X_train, y_train, verbose=verbose, **model_params
                 )
                 trained_models[model_name] = model
                 
+                if verbose:
+                    logger.info(f"✅ Successfully trained {model_name}")
+                
             except Exception as e:
-                logger.error(f"Failed to train {model_name}: {e}")
+                logger.error(f"❌ Failed to train {model_name}: {e}")
+                if verbose:
+                    import traceback
+                    logger.error(f"Error details:\n{traceback.format_exc()}")
                 continue
         
         # Save models and metadata
         self.save_model_suite(training_data_title, target_instrument, trained_models, X_test, y_test)
+        
+        if verbose:
+            logger.info(f"\n🎯 Training Suite Summary:")
+            logger.info(f"  Successfully Trained: {len(trained_models)}/{len(model_configs)} models")
+            if trained_models:
+                logger.info(f"  Trained Models:")
+                for name in trained_models.keys():
+                    logger.info(f"    ✅ {name}")
+            
+            failed_models = set(model_configs.keys()) - set(trained_models.keys())
+            if failed_models:
+                logger.info(f"  Failed Models:")
+                for name in failed_models:
+                    logger.info(f"    ❌ {name}")
         
         return trained_models
     

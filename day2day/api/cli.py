@@ -41,6 +41,7 @@ def main():
     train_parser.add_argument('--target-instrument', required=True, help='Target instrument')
     train_parser.add_argument('--models', nargs='+', help='Models to train')
     train_parser.add_argument('--test-size', type=float, default=0.2, help='Test set size')
+    train_parser.add_argument('--verbose', '-v', action='store_true', help='Enable detailed parameter logging for each model')
     
     # Bootstrapping
     bootstrap_parser = subparsers.add_parser('bootstrap', help='Run bootstrap analysis')
@@ -136,13 +137,32 @@ def main():
                 for model in args.models:
                     model_configs[model] = {'type': model, 'params': {}}
             
+            if args.verbose:
+                print("🔧 Starting model training with verbose logging enabled...")
+                print(f"Training data: {args.training_data_title}")
+                print(f"Target instrument: {args.target_instrument}")
+                print(f"Test size: {args.test_size} ({args.test_size*100:.1f}%)")
+                if model_configs:
+                    print(f"Specified models: {list(model_configs.keys())}")
+                else:
+                    print("Models: Using recommended defaults")
+                print("=" * 60)
+            
             models = api.train_models(
                 training_data_title=args.training_data_title,
                 target_instrument=args.target_instrument,
                 model_configs=model_configs,
-                test_size=args.test_size
+                test_size=args.test_size,
+                verbose=args.verbose
             )
-            print(f"Trained {len(models)} models successfully")
+            
+            if args.verbose:
+                print("=" * 60)
+                print(f"🎉 Training completed! Successfully trained {len(models)} models")
+                for model_name in models.keys():
+                    print(f"  ✅ {model_name}")
+            else:
+                print(f"Trained {len(models)} models successfully")
         
         elif args.command == 'bootstrap':
             results = api.run_bootstrap_analysis(

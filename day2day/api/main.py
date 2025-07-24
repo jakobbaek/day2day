@@ -153,6 +153,7 @@ class Day2DayAPI:
                     training_data_title: str,
                     target_instrument: str,
                     model_configs: Optional[Dict[str, Dict[str, Any]]] = None,
+                    verbose: bool = False,
                     **kwargs) -> Dict[str, Any]:
         """
         Train a suite of models.
@@ -161,6 +162,7 @@ class Day2DayAPI:
             training_data_title: Title of training data
             target_instrument: Target instrument
             model_configs: Model configurations (None for defaults)
+            verbose: Whether to print detailed parameter information for each model
             **kwargs: Additional training parameters
             
         Returns:
@@ -186,6 +188,7 @@ class Day2DayAPI:
             training_data_title=training_data_title,
             target_instrument=target_instrument,
             model_configs=model_configs,
+            verbose=verbose,
             **kwargs
         )
     
