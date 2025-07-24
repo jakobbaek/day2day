@@ -385,11 +385,16 @@ class DataPreparator:
         elif method == "previous_value":
             # Calculate percentage relative to previous value
             logger.info("Using previous_value method for percentage calculation")
+            processed_cols = 0
             for col in target_columns:
-                pct_col = f"{col}_pct"
-                result_df = result_df.with_columns(
-                    (pl.col(col).pct_change()).alias(pct_col)
-                )
+                if col != "datetime":  # Skip datetime column
+                    pct_col = f"{col}_pct"
+                    result_df = result_df.with_columns(
+                        (pl.col(col).pct_change()).alias(pct_col)
+                    )
+                    processed_cols += 1
+            
+            logger.info(f"Created {processed_cols} percentage columns using previous_value method")
         
         return result_df
     
@@ -934,8 +939,18 @@ class DataPreparator:
             # Try previous_day_close method first, fallback to previous_value if it fails
             try:
                 df = self.add_percentage_features(df, method="previous_day_close")
+                
+                # Check if any _pct columns were actually created
+                pct_columns_created = [col for col in df.columns if col.endswith('_pct')]
+                if len(pct_columns_created) == 0:
+                    logger.warning("Previous day close method created no percentage columns (likely no valid close prices)")
+                    logger.info("Falling back to previous_value method for percentage calculation")
+                    df = self.add_percentage_features(df, method="previous_value")
+                else:
+                    logger.info(f"Previous day close method successfully created {len(pct_columns_created)} percentage columns")
+                    
             except Exception as e:
-                logger.warning(f"Previous day close method failed: {e}")
+                logger.warning(f"Previous day close method failed with error: {e}")
                 logger.info("Falling back to previous_value method for percentage calculation")
                 df = self.add_percentage_features(df, method="previous_value")
             
