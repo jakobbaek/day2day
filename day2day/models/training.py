@@ -583,8 +583,8 @@ class ModelTrainer:
                     'name': 'xgboost_default',
                     'type': 'xgboost',
                     'params': {
-                        'n_estimators': 100,
-                        'max_depth': 6,
+                        'n_estimators': 512,
+                        'max_depth': 12,
                         'learning_rate': 0.1,
                         'random_state': 42
                     }
@@ -613,8 +613,8 @@ class ModelTrainer:
                 'name': 'xgboost_default',
                 'type': 'xgboost',
                 'params': {
-                    'n_estimators': 512,
-                    'max_depth': 12,
+                    'n_estimators': 100,
+                    'max_depth': 6,
                     'learning_rate': 0.1,
                     'random_state': 42
                 }
