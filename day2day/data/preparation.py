@@ -970,23 +970,30 @@ class DataPreparator:
                 pct_col = f"{col}_pct"
                 if pct_col in df.columns:
                     # Show sample values before and after replacement
-                    original_sample = df.select(col).head(20).drop_nulls().to_series().to_list()
-                    pct_sample = df.select(pct_col).head(20).drop_nulls().to_series().to_list()
+                    # Get all values first, then filter for non-null for display
+                    original_all = df.select(col).head(100).to_series().to_list()
+                    pct_all = df.select(pct_col).head(100).to_series().to_list()
                     
-                    if len(original_sample) > 0 and len(pct_sample) > 0:
-                        logger.info(f"DEBUG: Replacing {col} with {pct_col}")
-                        logger.info(f"  Original values: {original_sample[:3]}")
-                        logger.info(f"  Percentage values: {pct_sample[:3]}")
-                        
-                        # Replace raw price column with percentage values, keeping same column name
-                        df = df.drop(col).rename({pct_col: col})
-                        replacements_made += 1
-                        
-                        # Verify replacement worked
-                        new_sample = df.select(col).head(20).drop_nulls().to_series().to_list()
-                        logger.info(f"  After replacement: {new_sample[:3]}")
-                    else:
-                        logger.warning(f"DEBUG: Skipping {col} - no non-null data (original: {len(original_sample)}, pct: {len(pct_sample)})")
+                    # Count non-null values
+                    original_non_null = [x for x in original_all if x is not None]
+                    pct_non_null = [x for x in pct_all if x is not None]
+                    
+                    # Count total non-null in entire column
+                    original_total_non_null = df.select(pl.col(col).is_not_null().sum()).item()
+                    pct_total_non_null = df.select(pl.col(pct_col).is_not_null().sum()).item()
+                    
+                    logger.info(f"DEBUG: Replacing {col} with {pct_col}")
+                    logger.info(f"  Original column: {original_total_non_null} non-null values total, sample: {original_non_null[:3]}")
+                    logger.info(f"  Percentage column: {pct_total_non_null} non-null values total, sample: {pct_non_null[:3]}")
+                    
+                    # Always do the replacement - don't skip based on sample data
+                    df = df.drop(col).rename({pct_col: col})
+                    replacements_made += 1
+                    
+                    # Verify replacement worked
+                    new_all = df.select(col).head(100).to_series().to_list()
+                    new_non_null = [x for x in new_all if x is not None]
+                    logger.info(f"  After replacement: sample values {new_non_null[:3]}")
                 else:
                     logger.warning(f"DEBUG: Expected _pct column {pct_col} not found for {col}")
             
