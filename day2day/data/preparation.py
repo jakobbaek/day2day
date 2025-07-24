@@ -955,36 +955,42 @@ class DataPreparator:
                 df = self.add_percentage_features(df, method="previous_value")
             
             # Replace raw price columns with percentage columns (same column names)
-            price_columns = [col for col in df.columns if any(col.startswith(f"{price}_") for price in value_columns)]
-            logger.info(f"DEBUG: Found {len(price_columns)} price columns to convert: {price_columns[:5]}...")
+            # Only process original price columns, not the newly created _pct columns
+            original_price_columns = [col for col in df.columns 
+                                    if any(col.startswith(f"{price}_") for price in value_columns) 
+                                    and not col.endswith('_pct')]
+            logger.info(f"DEBUG: Found {len(original_price_columns)} original price columns to convert: {original_price_columns[:5]}...")
             
             # Check what _pct columns were actually created
             pct_columns = [col for col in df.columns if col.endswith('_pct')]
             logger.info(f"DEBUG: Found {len(pct_columns)} _pct columns: {pct_columns[:5]}...")
             
             replacements_made = 0
-            for col in price_columns:
+            for col in original_price_columns:
                 pct_col = f"{col}_pct"
                 if pct_col in df.columns:
                     # Show sample values before and after replacement
-                    original_sample = df.select(col).head(10).drop_nulls().to_series().to_list()
-                    pct_sample = df.select(pct_col).head(10).drop_nulls().to_series().to_list()
+                    original_sample = df.select(col).head(20).drop_nulls().to_series().to_list()
+                    pct_sample = df.select(pct_col).head(20).drop_nulls().to_series().to_list()
                     
-                    logger.info(f"DEBUG: Replacing {col} with {pct_col}")
-                    logger.info(f"  Original values: {original_sample[:3]}")
-                    logger.info(f"  Percentage values: {pct_sample[:3]}")
-                    
-                    # Replace raw price column with percentage values, keeping same column name
-                    df = df.drop(col).rename({pct_col: col})
-                    replacements_made += 1
-                    
-                    # Verify replacement worked
-                    new_sample = df.select(col).head(10).drop_nulls().to_series().to_list()
-                    logger.info(f"  After replacement: {new_sample[:3]}")
+                    if len(original_sample) > 0 and len(pct_sample) > 0:
+                        logger.info(f"DEBUG: Replacing {col} with {pct_col}")
+                        logger.info(f"  Original values: {original_sample[:3]}")
+                        logger.info(f"  Percentage values: {pct_sample[:3]}")
+                        
+                        # Replace raw price column with percentage values, keeping same column name
+                        df = df.drop(col).rename({pct_col: col})
+                        replacements_made += 1
+                        
+                        # Verify replacement worked
+                        new_sample = df.select(col).head(20).drop_nulls().to_series().to_list()
+                        logger.info(f"  After replacement: {new_sample[:3]}")
+                    else:
+                        logger.warning(f"DEBUG: Skipping {col} - no non-null data (original: {len(original_sample)}, pct: {len(pct_sample)})")
                 else:
                     logger.warning(f"DEBUG: Expected _pct column {pct_col} not found for {col}")
             
-            logger.info(f"DEBUG: Made {replacements_made} successful replacements out of {len(price_columns)} price columns")
+            logger.info(f"DEBUG: Made {replacements_made} successful replacements out of {len(original_price_columns)} price columns")
             logger.info(f"✓ Step 6 completed in {time.time() - step_start:.2f}s - Converted to percentage features: {len(df.columns)} columns")
             logger.info("Price columns now contain percentage changes (same column names)")
         else:
