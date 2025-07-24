@@ -37,8 +37,8 @@ class XGBoostModel(BaseModel):
         # Default parameters
         default_params = {
             'objective': 'reg:squarederror',
-            'n_estimators': 100,
-            'max_depth': 6,
+            'n_estimators': 250,
+            'max_depth': 8,
             'learning_rate': 0.1,
             'random_state': 42
         }
