@@ -319,9 +319,9 @@ class DateTimeStandardizer:
         """
         logger.info(f"Creating complete timeline for {ticker}")
         
-        # Get instrument-specific market hours instead of global hours
-        # This prevents creating unnecessary null gaps for instruments that trade shorter hours
-        market_open, market_close = self.infer_instrument_specific_hours(df, ticker)
+        # Use global market hours to ensure consistent timeline across all instruments
+        # Individual instruments may have nulls when they stop trading early - this is correct
+        market_open, market_close = self.infer_market_hours(df, ticker)
         
         # Get date range from data
         ticker_data = df.filter(pl.col("ticker") == ticker)

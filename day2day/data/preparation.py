@@ -770,10 +770,14 @@ class DataPreparator:
         try:
             market_open, market_close = self.datetime_standardizer.infer_market_hours(df)
             
-            # Calculate cutoff time (X hours before market close)
+            # Calculate cutoff time accounting for prediction horizon
+            # Last tradeable prediction should not extend beyond market close
+            prediction_horizon_hours = horizon / 60  # Convert minutes to hours
+            total_exclusion_hours = exclude_last_hours + prediction_horizon_hours
+            
             close_hour = market_close.hour
             close_minute = market_close.minute
-            cutoff_minutes = close_minute - int(exclude_last_hours * 60)
+            cutoff_minutes = close_minute - int(total_exclusion_hours * 60)
             cutoff_hour = close_hour
             
             # Handle minute overflow
@@ -784,8 +788,13 @@ class DataPreparator:
             from datetime import time
             cutoff_time = time(cutoff_hour, cutoff_minutes)
             
-            logger.info(f"Day trading target cutoff: Excluding last {exclude_last_hours}h of trading")
-            logger.info(f"Market close: {market_close}, Cutoff time: {cutoff_time}")
+            logger.info(f"Day trading cutoff calculation:")
+            logger.info(f"  Market close: {market_close}")
+            logger.info(f"  Prediction horizon: {prediction_horizon_hours:.1f}h")
+            logger.info(f"  User exclusion: {exclude_last_hours}h")
+            logger.info(f"  Total exclusion: {total_exclusion_hours:.1f}h")
+            logger.info(f"  Trading cutoff: {cutoff_time}")
+            logger.info(f"  → Last tradeable prediction at {cutoff_time} predicts until {market_close}")
             
         except Exception:
             # Fallback to conservative estimate
