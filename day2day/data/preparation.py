@@ -347,20 +347,69 @@ class DataPreparator:
                         .sort("date")
                     )
                     
-                    # Check if we have valid close prices
+                    # Check if we have any valid close prices at all
                     valid_closes = daily_close.filter(pl.col(f"daily_close_{ticker}").is_not_null())
                     if len(valid_closes) == 0:
-                        logger.warning(f"No valid close prices found for ticker {ticker}")
-                        continue
+                        logger.warning(f"No valid close prices found for ticker {ticker} - trying fallback with open prices")
+                        
+                        # Fallback: try using open prices as close prices
+                        open_col = f"open_{ticker}"
+                        if open_col in df.columns:
+                            daily_close = (result_df
+                                .group_by("date")
+                                .agg(pl.col(open_col).first().alias(f"daily_close_{ticker}"))
+                                .sort("date")
+                            )
+                            valid_closes = daily_close.filter(pl.col(f"daily_close_{ticker}").is_not_null())
+                            if len(valid_closes) == 0:
+                                logger.warning(f"No valid open prices either for ticker {ticker}")
+                                continue
+                            else:
+                                logger.info(f"Using open prices as reference for ticker {ticker}")
+                        else:
+                            logger.warning(f"No open column found either for ticker {ticker}")
+                            continue
                     
-                    # Create previous trading day mapping
-                    # Shift the close prices by 1 position to get previous trading day's close
+                    # Create previous trading day mapping with smart fallback
                     daily_close_with_prev = daily_close.with_columns([
                         pl.col(f"daily_close_{ticker}").shift(1).alias(f"prev_close_{ticker}")
-                    ]).select(["date", f"prev_close_{ticker}"])
+                    ])
+                    
+                    # For the first day (where prev_close is null), use the same day's open price
+                    # This represents "no change from market open" = 0% change
+                    open_col = f"open_{ticker}"
+                    if open_col in df.columns:
+                        # Get daily open prices
+                        daily_open = (result_df
+                            .group_by("date")
+                            .agg(pl.col(open_col).first().alias(f"daily_open_{ticker}"))
+                            .sort("date")
+                        )
+                        
+                        # Join to get both prev_close and open for each date
+                        daily_reference = daily_close_with_prev.join(
+                            daily_open.select(["date", f"daily_open_{ticker}"]), 
+                            on="date", 
+                            how="left"
+                        )
+                        
+                        # Use prev_close if available, otherwise use same day's open (for first day)
+                        daily_reference = daily_reference.with_columns([
+                            pl.when(pl.col(f"prev_close_{ticker}").is_not_null())
+                            .then(pl.col(f"prev_close_{ticker}"))
+                            .otherwise(pl.col(f"daily_open_{ticker}"))
+                            .alias(f"reference_price_{ticker}")
+                        ]).select(["date", f"reference_price_{ticker}"])
+                        
+                        logger.debug(f"Created reference prices for {ticker} (prev_close or same-day open)")
+                    else:
+                        # No open prices available, just use the shifted close prices
+                        daily_reference = daily_close_with_prev.select(["date", f"prev_close_{ticker}"])
+                        daily_reference = daily_reference.rename({f"prev_close_{ticker}": f"reference_price_{ticker}"})
+                        logger.debug(f"Using only previous close prices for {ticker} (no open prices available)")
                     
                     # Join and calculate percentage
-                    result_df = result_df.join(daily_close_with_prev, on="date", how="left")
+                    result_df = result_df.join(daily_reference, on="date", how="left")
                     
                     # Calculate percentage change for all columns related to this ticker
                     processed_cols = 0
@@ -368,15 +417,19 @@ class DataPreparator:
                         if value_col.endswith(f"_{ticker}"):
                             pct_col = f"{value_col}_pct"
                             result_df = result_df.with_columns(
-                                ((pl.col(value_col) - pl.col(f"prev_close_{ticker}")) / 
-                                 pl.col(f"prev_close_{ticker}")).alias(pct_col)
+                                pl.when(pl.col(f"reference_price_{ticker}").is_not_null() & 
+                                       (pl.col(f"reference_price_{ticker}") != 0))
+                                .then(((pl.col(value_col) - pl.col(f"reference_price_{ticker}")) / 
+                                      pl.col(f"reference_price_{ticker}")))
+                                .otherwise(None)  # Keep as null if reference price is missing or zero
+                                .alias(pct_col)
                             )
                             processed_cols += 1
                     
                     logger.debug(f"Created {processed_cols} percentage columns for ticker {ticker}")
                     
                     # Clean up temporary column
-                    result_df = result_df.drop(f"prev_close_{ticker}")
+                    result_df = result_df.drop(f"reference_price_{ticker}")
                 else:
                     logger.warning(f"Close column {close_col} not found for ticker {ticker}")
             
