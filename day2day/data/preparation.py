@@ -1189,6 +1189,45 @@ class DataPreparator:
         
         df = self.create_target_variable(df, target_column, exclude_last_hours=exclude_last_hours)
         
+        # DEBUG: Check data AFTER target creation
+        logger.info("=== DEBUGGING AFTER TARGET CREATION ===")
+        sample_date = df.select(pl.col("datetime").dt.date().unique()).head(1).to_series().to_list()[0]
+        sample_after = df.filter(pl.col("datetime").dt.date() == sample_date).sort("datetime")
+        
+        # Check target variable distribution
+        target_hourly = (sample_after
+            .with_columns(pl.col("datetime").dt.hour().alias("hour"))
+            .group_by("hour")
+            .agg([
+                pl.col("target").count().alias("total_rows"),
+                pl.col("target").is_not_null().sum().alias("target_non_null"),
+                pl.col(target_column).is_not_null().sum().alias("original_non_null")
+            ])
+            .sort("hour")
+        )
+        
+        logger.info(f"After target creation - hourly distribution on {sample_date}:")
+        for row in target_hourly.iter_rows(named=True):
+            hour = row['hour']
+            total = row['total_rows']
+            target_nn = row['target_non_null']
+            orig_nn = row['original_non_null']
+            if total > 0:
+                logger.info(f"  Hour {hour:02d}: target={target_nn}/{total}, original={orig_nn}/{total}")
+        
+        # Check if there are any gaps in target
+        target_gaps = sample_after.filter(
+            (pl.col(target_column).is_not_null()) & (pl.col("target").is_null())
+        ).select(["datetime", target_column, "target"]).head(10)
+        
+        if len(target_gaps) > 0:
+            logger.warning("Found places where original data exists but target is null:")
+            for row in target_gaps.iter_rows(named=True):
+                dt = row['datetime']
+                logger.warning(f"  {dt.strftime('%H:%M:%S')}: original={row[target_column]}, target=null")
+        
+        logger.info("=== END POST-TARGET DEBUGGING ===")
+        
         # Remove rows with missing target (due to prediction horizon at end of dataset)
         # But keep all rows with trading_eligible flag for proper evaluation
         initial_rows = len(df)
