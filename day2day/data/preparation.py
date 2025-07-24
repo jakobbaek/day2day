@@ -1255,7 +1255,17 @@ class DataPreparator:
             logger.warning("Found places where original data exists but target is null:")
             for row in target_gaps.iter_rows(named=True):
                 dt = row['datetime']
+                target_time = dt + timedelta(minutes=60)  # Where this prediction should look
                 logger.warning(f"  {dt.strftime('%H:%M:%S')}: original={row[target_column]}, target=null")
+                logger.warning(f"    → This prediction looks for data at {target_time.strftime('%H:%M:%S')}")
+                
+                # Check if the target time data exists
+                target_time_data = sample_after.filter(pl.col("datetime").dt.time() == target_time.time())
+                if len(target_time_data) > 0:
+                    target_value = target_time_data.select(target_column).item()
+                    logger.warning(f"    → Data at target time: {target_value}")
+                else:
+                    logger.warning(f"    → NO DATA at target time - this explains the null target!")
         
         logger.info("=== END POST-TARGET DEBUGGING ===")
         
