@@ -1106,11 +1106,43 @@ class DataPreparator:
         
         # DEBUG: Check data patterns before target creation
         logger.info("=== DEBUGGING TARGET VARIABLE PATTERN ===")
-        sample_date = df.select(pl.col("datetime").dt.date().unique()).head(3).to_series().to_list()[0]
-        logger.info(f"Examining sample date: {sample_date}")
         
-        sample_day_data = df.filter(pl.col("datetime").dt.date() == sample_date).sort("datetime")
-        if target_column in sample_day_data.columns:
+        # Check multiple dates and find one with actual data
+        sample_dates = df.select(pl.col("datetime").dt.date().unique()).head(10).to_series().to_list()
+        logger.info(f"Available dates: {sample_dates[:5]}...")
+        
+        # Find a date that has actual data for the target instrument
+        working_date = None
+        for test_date in sample_dates[:5]:
+            test_data = df.filter(pl.col("datetime").dt.date() == test_date)
+            if target_column in test_data.columns:
+                non_null_count = test_data.select(pl.col(target_column).is_not_null().sum()).item()
+                if non_null_count > 0:
+                    working_date = test_date
+                    logger.info(f"Found data for {target_column} on {test_date}: {non_null_count} non-null values")
+                    break
+                else:
+                    logger.info(f"No data for {target_column} on {test_date}")
+        
+        if working_date is None:
+            logger.warning(f"No data found for {target_column} on any sample date!")
+            # Check which instruments DO have data
+            logger.info("Checking which instruments have data...")
+            high_columns = [col for col in df.columns if col.startswith("high_")]
+            for col in high_columns[:3]:
+                col_data_count = df.select(pl.col(col).is_not_null().sum()).item()
+                logger.info(f"  {col}: {col_data_count} non-null values total")
+                if col_data_count > 0:
+                    # Use this instrument for debugging instead
+                    target_column = col
+                    working_date = sample_dates[0]
+                    logger.info(f"Using {col} for debugging instead")
+                    break
+        
+        if working_date:
+            logger.info(f"Examining {target_column} on {working_date}")
+            sample_day_data = df.filter(pl.col("datetime").dt.date() == working_date).sort("datetime")
+            
             # Show hourly distribution of target data
             hourly_counts = (sample_day_data
                 .with_columns(pl.col("datetime").dt.hour().alias("hour"))
@@ -1122,37 +1154,36 @@ class DataPreparator:
                 .sort("hour")
             )
             
-            logger.info(f"Hourly distribution for {target_column} on {sample_date}:")
+            logger.info(f"Hourly distribution for {target_column} on {working_date}:")
             for row in hourly_counts.iter_rows(named=True):
-                logger.info(f"  Hour {row['hour']:02d}: {row['non_null_values']}/{row['total_rows']} non-null values")
+                hour = row['hour']
+                non_null = row['non_null_values']
+                total = row['total_rows']
+                if non_null > 0:  # Only show hours with data
+                    logger.info(f"  Hour {hour:02d}: {non_null}/{total} non-null values")
             
-            # Check specific times around the gap
-            gap_times = sample_day_data.filter(
-                (pl.col("datetime").dt.hour() >= 12) & (pl.col("datetime").dt.hour() <= 15)
-            ).select(["datetime", target_column]).head(20)
+            # Check for the specific gap pattern (12:35 to 14:37)
+            gap_period = sample_day_data.filter(
+                (pl.col("datetime").dt.hour() == 12) & (pl.col("datetime").dt.minute() >= 35) |
+                (pl.col("datetime").dt.hour() == 13) |
+                (pl.col("datetime").dt.hour() == 14) & (pl.col("datetime").dt.minute() <= 37)
+            ).select(["datetime", target_column])
             
-            logger.info("Sample times around potential gap (12:00-15:00):")
-            for row in gap_times.iter_rows(named=True):
-                dt = row['datetime']
-                val = row[target_column]
-                logger.info(f"  {dt.strftime('%H:%M:%S')}: {val}")
-        
-        # Also check if the gap exists in the original price data (before target creation)
-        logger.info("Checking original price data for gaps...")
-        gap_check_data = sample_day_data.select(["datetime", target_column]).sort("datetime")
-        
-        # Look for time gaps in the data
-        gap_check_data = gap_check_data.with_columns([
-            pl.col("datetime").diff().dt.total_minutes().alias("time_diff")
-        ])
-        
-        large_gaps = gap_check_data.filter(pl.col("time_diff") > 5)  # Gaps > 5 minutes
-        if len(large_gaps) > 0:
-            logger.warning("Found time gaps > 5 minutes in original data:")
-            for row in large_gaps.head(10).iter_rows(named=True):
-                logger.warning(f"  Gap at {row['datetime'].strftime('%H:%M:%S')}: {row['time_diff']:.1f} minutes")
-        else:
-            logger.info("No significant time gaps found in original data")
+            logger.info("Checking 12:35-14:37 period specifically:")
+            non_null_in_gap = gap_period.select(pl.col(target_column).is_not_null().sum()).item()
+            total_in_gap = len(gap_period)
+            logger.info(f"  Gap period: {non_null_in_gap}/{total_in_gap} non-null values")
+            
+            if non_null_in_gap < total_in_gap * 0.5:  # Less than 50% data in gap period
+                logger.warning("CONFIRMED: Significant data gap found in 12:35-14:37 period!")
+                logger.info("Sample from gap period:")
+                for row in gap_period.head(10).iter_rows(named=True):
+                    dt = row['datetime']
+                    val = row[target_column]
+                    status = "DATA" if val is not None else "NULL"
+                    logger.info(f"    {dt.strftime('%H:%M:%S')}: {status}")
+            else:
+                logger.info("No significant gap found in 12:35-14:37 period")
         
         logger.info("=== END DEBUGGING ===")
         

@@ -100,8 +100,8 @@ class Settings:
     
     @property
     def prediction_horizon_minutes(self) -> int:
-        """Prediction horizon in minutes (for 5-minute intervals)."""
-        return self.prediction_horizon_hours * 12  # 2 hours = 24 5-minute intervals
+        """Prediction horizon in minutes (for 1-minute intervals)."""
+        return self.prediction_horizon_hours * 60  # 2 hours = 120 1-minute intervals
     
     @property
     def default_train_test_split(self) -> float:
