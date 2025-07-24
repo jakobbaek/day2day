@@ -31,26 +31,45 @@ def main():
         if len(novo_raw) > 0:
             print(f"✓ Found NOVO raw data: {len(novo_raw)} records")
             
-            # Get most recent date with data
-            recent_dates = novo_raw.select(
-                pl.col('datetime').str.slice(0, 10).unique().alias('date')
-            ).sort('date').tail(3).to_series().to_list()
+            # Check if datetime is already parsed or string
+            datetime_dtype = novo_raw.select(pl.col('datetime')).dtypes[0]
+            print(f"📊 Datetime column type: {datetime_dtype}")
+            
+            if datetime_dtype == pl.Datetime:
+                # Already parsed datetime
+                recent_dates = novo_raw.select(
+                    pl.col('datetime').dt.date().unique().alias('date')
+                ).sort('date').tail(3).to_series().to_list()
+                
+                target_date = recent_dates[-1]
+                daily_raw = novo_raw.filter(pl.col('datetime').dt.date() == target_date)
+            else:
+                # String datetime
+                recent_dates = novo_raw.select(
+                    pl.col('datetime').str.slice(0, 10).unique().alias('date')
+                ).sort('date').tail(3).to_series().to_list()
+                
+                target_date = recent_dates[-1]
+                daily_raw = novo_raw.filter(pl.col('datetime').str.contains(str(target_date)))
             
             print(f"📅 Recent dates with NOVO data: {recent_dates}")
-            
-            # Analyze most recent date
-            target_date = recent_dates[-1]
             print(f"\n🔍 Analyzing NOVO data on {target_date}:")
-            
-            daily_raw = novo_raw.filter(pl.col('datetime').str.contains(target_date))
             print(f"Raw records on {target_date}: {len(daily_raw)}")
             
             if len(daily_raw) > 0:
                 # Show hourly distribution in raw data
-                daily_raw = daily_raw.with_columns([
-                    pl.col('datetime').str.slice(11, 2).cast(pl.Int32).alias('hour'),
-                    pl.col('datetime').str.slice(14, 2).cast(pl.Int32).alias('minute')
-                ])
+                if datetime_dtype == pl.Datetime:
+                    # Use datetime methods
+                    daily_raw = daily_raw.with_columns([
+                        pl.col('datetime').dt.hour().alias('hour'),
+                        pl.col('datetime').dt.minute().alias('minute')
+                    ])
+                else:
+                    # Use string slicing
+                    daily_raw = daily_raw.with_columns([
+                        pl.col('datetime').str.slice(11, 2).cast(pl.Int32).alias('hour'),
+                        pl.col('datetime').str.slice(14, 2).cast(pl.Int32).alias('minute')
+                    ])
                 
                 hourly_raw = daily_raw.group_by('hour').agg(pl.len().alias('count')).sort('hour')
                 print("\n📊 Raw data hourly distribution:")
@@ -62,11 +81,24 @@ def main():
                 last_time = daily_raw.select(pl.col('datetime')).sort('datetime').tail(1).item()
                 print(f"\n⏰ Raw time range: {first_time} to {last_time}")
                 
+                # Check if last_time is before 14:00 (this would indicate the bug is in raw data)
+                if datetime_dtype == pl.Datetime:
+                    last_hour = last_time.hour if hasattr(last_time, 'hour') else None
+                else:
+                    last_hour = int(str(last_time)[11:13]) if len(str(last_time)) > 13 else None
+                
+                if last_hour and last_hour < 14:
+                    print(f"🚨 BUG DETECTED: Raw data stops at hour {last_hour}, should continue beyond 14:00!")
+                elif last_hour and last_hour >= 14:
+                    print(f"✅ Raw data extends to hour {last_hour}, bug must be in processing pipeline")
+                
                 # Show last few records
                 print("\n📋 Last 5 raw records:")
                 last_raw = daily_raw.sort('datetime').tail(5)
                 for row in last_raw.iter_rows(named=True):
-                    print(f"  {row['datetime']}: high={row['high']:.6f}")
+                    dt_str = str(row['datetime'])
+                    high = row['high']
+                    print(f"  {dt_str}: high={high:.6f}")
         else:
             print("❌ No NOVO data found in raw file")
             available_tickers = raw_df.select('ticker').unique().head(10).to_series().to_list()
