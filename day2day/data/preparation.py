@@ -782,6 +782,9 @@ class DataPreparator:
             logger.warning(f"Using fallback cutoff time: {cutoff_time}")
         
         # Create future target (keep all predictions for evaluation)
+        logger.info(f"Creating target variable with horizon={horizon} time steps ({horizon/60:.1f} hours)")
+        logger.info(f"This means predicting {horizon} minutes into the future")
+        
         result_df = result_df.with_columns(
             pl.col(target_column).shift(-horizon).alias("target")
         )
@@ -1108,12 +1111,19 @@ class DataPreparator:
         logger.info("=== DEBUGGING TARGET VARIABLE PATTERN ===")
         
         # Check multiple dates and find one with actual data
-        sample_dates = df.select(pl.col("datetime").dt.date().unique()).head(10).to_series().to_list()
+        sample_dates = df.select(pl.col("datetime").dt.date().unique()).sort("datetime").to_series().to_list()
         logger.info(f"Available dates: {sample_dates[:5]}...")
+        
+        # Try to find a date from around December 28, 2023 or later (when data exists)
+        target_dates = [d for d in sample_dates if d.year == 2023 and d.month == 12 and d.day >= 28]
+        if not target_dates:
+            target_dates = sample_dates[-5:]  # Use last 5 dates as fallback
+        
+        logger.info(f"Targeting dates for debugging: {target_dates[:3]}")
         
         # Find a date that has actual data for the target instrument
         working_date = None
-        for test_date in sample_dates[:5]:
+        for test_date in target_dates[:3]:
             test_data = df.filter(pl.col("datetime").dt.date() == test_date)
             if target_column in test_data.columns:
                 non_null_count = test_data.select(pl.col(target_column).is_not_null().sum()).item()
