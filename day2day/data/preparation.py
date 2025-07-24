@@ -1103,6 +1103,59 @@ class DataPreparator:
             raise ValueError(f"Target column {target_column} not found in data")
         
         logger.info(f"Creating target variable using HIGH price: {target_column}")
+        
+        # DEBUG: Check data patterns before target creation
+        logger.info("=== DEBUGGING TARGET VARIABLE PATTERN ===")
+        sample_date = df.select(pl.col("datetime").dt.date().unique()).head(3).to_series().to_list()[0]
+        logger.info(f"Examining sample date: {sample_date}")
+        
+        sample_day_data = df.filter(pl.col("datetime").dt.date() == sample_date).sort("datetime")
+        if target_column in sample_day_data.columns:
+            # Show hourly distribution of target data
+            hourly_counts = (sample_day_data
+                .with_columns(pl.col("datetime").dt.hour().alias("hour"))
+                .group_by("hour")
+                .agg([
+                    pl.col(target_column).count().alias("total_rows"),
+                    pl.col(target_column).is_not_null().sum().alias("non_null_values")
+                ])
+                .sort("hour")
+            )
+            
+            logger.info(f"Hourly distribution for {target_column} on {sample_date}:")
+            for row in hourly_counts.iter_rows(named=True):
+                logger.info(f"  Hour {row['hour']:02d}: {row['non_null_values']}/{row['total_rows']} non-null values")
+            
+            # Check specific times around the gap
+            gap_times = sample_day_data.filter(
+                (pl.col("datetime").dt.hour() >= 12) & (pl.col("datetime").dt.hour() <= 15)
+            ).select(["datetime", target_column]).head(20)
+            
+            logger.info("Sample times around potential gap (12:00-15:00):")
+            for row in gap_times.iter_rows(named=True):
+                dt = row['datetime']
+                val = row[target_column]
+                logger.info(f"  {dt.strftime('%H:%M:%S')}: {val}")
+        
+        # Also check if the gap exists in the original price data (before target creation)
+        logger.info("Checking original price data for gaps...")
+        gap_check_data = sample_day_data.select(["datetime", target_column]).sort("datetime")
+        
+        # Look for time gaps in the data
+        gap_check_data = gap_check_data.with_columns([
+            pl.col("datetime").diff().dt.total_minutes().alias("time_diff")
+        ])
+        
+        large_gaps = gap_check_data.filter(pl.col("time_diff") > 5)  # Gaps > 5 minutes
+        if len(large_gaps) > 0:
+            logger.warning("Found time gaps > 5 minutes in original data:")
+            for row in large_gaps.head(10).iter_rows(named=True):
+                logger.warning(f"  Gap at {row['datetime'].strftime('%H:%M:%S')}: {row['time_diff']:.1f} minutes")
+        else:
+            logger.info("No significant time gaps found in original data")
+        
+        logger.info("=== END DEBUGGING ===")
+        
         df = self.create_target_variable(df, target_column, exclude_last_hours=exclude_last_hours)
         
         # Remove rows with missing target (due to prediction horizon at end of dataset)
