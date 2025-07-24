@@ -807,6 +807,29 @@ class DataPreparator:
         logger.info(f"DataFrame size: {df_size} rows")
         logger.info(f"DateTime range: {datetime_range['min_dt']} to {datetime_range['max_dt']}")
         
+        # DEBUG: Analyze date range and check for excessive future dates
+        max_dt = datetime_range['max_dt']
+        min_dt = datetime_range['min_dt']
+        
+        # Show date distribution to understand the data pattern (no year filtering)
+        date_dist = result_df.select([
+            pl.col("datetime").dt.year().alias("year"),
+            pl.col("datetime").dt.month().alias("month")
+        ]).group_by(["year", "month"]).agg(pl.count().alias("count")).sort(["year", "month"])
+        
+        logger.info("Date distribution in DataFrame:")
+        logger.info(f"Date range: {min_dt} to {max_dt}")
+        for row in date_dist.tail(10).iter_rows(named=True):
+            logger.info(f"  {row['year']}-{row['month']:02d}: {row['count']} rows")
+            
+        # Check if timeline creation is generating too many future dates
+        from datetime import datetime as dt_now
+        current_date = dt_now.now().date()
+        if max_dt.date() > current_date:
+            days_future = (max_dt.date() - current_date).days
+            logger.warning(f"Data extends {days_future} days into future: {max_dt.date()}")
+            logger.warning("This suggests timeline creation might be too aggressive")
+        
         # Check for gaps in datetime sequence
         result_df_sorted = result_df.sort("datetime")
         time_diffs = result_df_sorted.select([
@@ -825,17 +848,20 @@ class DataPreparator:
             pl.col(target_column).shift(-horizon).alias("target")
         )
         
-        # DEBUG: Verify shift worked
+        # DEBUG: Verify shift worked - sample from middle of day with data
         shift_test = result_df.filter(
-            pl.col("datetime").dt.time().is_between(time(12, 55), time(13, 5))
-        ).select(["datetime", target_column, "target"]).sort("datetime")
+            (pl.col("datetime").dt.hour() >= 9) & (pl.col("datetime").dt.hour() <= 12) &
+            (pl.col(target_column).is_not_null())
+        ).select(["datetime", target_column, "target"]).sort("datetime").head(10)
         
-        logger.info("DEBUG: Sample of shift operation around problematic times:")
-        for row in shift_test.head(10).iter_rows(named=True):
+        logger.info("DEBUG: Sample of shift operation (morning hours with data):")
+        for row in shift_test.iter_rows(named=True):
             dt = row['datetime']
             orig = row[target_column]
             tgt = row['target']
-            logger.info(f"  {dt.strftime('%H:%M:%S')}: original={orig}, target={tgt}")
+            orig_str = f"{orig:.6f}" if orig is not None else "None"
+            tgt_str = f"{tgt:.6f}" if tgt is not None else "None"
+            logger.info(f"  {dt.strftime('%H:%M:%S')}: original={orig_str}, target={tgt_str}")
         
         # CRITICAL DEBUG: Check target variable distribution immediately after creation
         target_stats = result_df.select([

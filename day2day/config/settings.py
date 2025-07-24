@@ -96,7 +96,8 @@ class Settings:
     @property
     def prediction_horizon_hours(self) -> int:
         """Prediction horizon in hours."""
-        return int(os.getenv("PREDICTION_HORIZON_HOURS", "1"))  # 1 hour for day trading
+        # Force 1 hour for day trading - ignore environment override
+        return 1
     
     @property
     def prediction_horizon_minutes(self) -> int:
