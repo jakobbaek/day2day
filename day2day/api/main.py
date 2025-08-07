@@ -154,6 +154,8 @@ class Day2DayAPI:
                     target_instrument: str,
                     model_configs: Optional[Dict[str, Dict[str, Any]]] = None,
                     verbose: bool = False,
+                    use_exponential_decay: bool = False,
+                    decay_factor: float = 0.95,
                     **kwargs) -> Dict[str, Any]:
         """
         Train a suite of models.
@@ -163,6 +165,8 @@ class Day2DayAPI:
             target_instrument: Target instrument
             model_configs: Model configurations (None for defaults)
             verbose: Whether to print detailed parameter information for each model
+            use_exponential_decay: Whether to apply exponential decay weights (recent data weighted more)
+            decay_factor: Decay factor for exponential weights (0.0-1.0, higher = more recent bias)
             **kwargs: Additional training parameters
             
         Returns:
@@ -189,6 +193,8 @@ class Day2DayAPI:
             target_instrument=target_instrument,
             model_configs=model_configs,
             verbose=verbose,
+            use_exponential_decay=use_exponential_decay,
+            decay_factor=decay_factor,
             **kwargs
         )
     

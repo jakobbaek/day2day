@@ -42,6 +42,8 @@ def main():
     train_parser.add_argument('--models', nargs='+', help='Models to train')
     train_parser.add_argument('--test-size', type=float, default=0.2, help='Test set size')
     train_parser.add_argument('--verbose', '-v', action='store_true', help='Enable detailed parameter logging for each model')
+    train_parser.add_argument('--exponential-decay', action='store_true', help='Apply exponential decay weights (recent data weighted more)')
+    train_parser.add_argument('--decay-factor', type=float, default=0.95, help='Decay factor (0.0-1.0, higher = more recent bias, default: 0.95)')
     
     # Bootstrapping
     bootstrap_parser = subparsers.add_parser('bootstrap', help='Run bootstrap analysis')
@@ -142,6 +144,9 @@ def main():
                 print(f"Training data: {args.training_data_title}")
                 print(f"Target instrument: {args.target_instrument}")
                 print(f"Test size: {args.test_size} ({args.test_size*100:.1f}%)")
+                print(f"Exponential decay: {args.exponential_decay}")
+                if args.exponential_decay:
+                    print(f"Decay factor: {args.decay_factor} (higher = more recent bias)")
                 if model_configs:
                     print(f"Specified models: {list(model_configs.keys())}")
                 else:
@@ -153,7 +158,9 @@ def main():
                 target_instrument=args.target_instrument,
                 model_configs=model_configs,
                 test_size=args.test_size,
-                verbose=args.verbose
+                verbose=args.verbose,
+                use_exponential_decay=args.exponential_decay,
+                decay_factor=args.decay_factor
             )
             
             if args.verbose:
@@ -162,7 +169,10 @@ def main():
                 for model_name in models.keys():
                     print(f"  ✅ {model_name}")
             else:
-                print(f"Trained {len(models)} models successfully")
+                success_msg = f"Trained {len(models)} models successfully"
+                if args.exponential_decay:
+                    success_msg += f" (with exponential decay, factor={args.decay_factor})"
+                print(success_msg)
         
         elif args.command == 'bootstrap':
             results = api.run_bootstrap_analysis(

@@ -19,7 +19,7 @@ class BaseModel(ABC):
         self.config = kwargs
     
     @abstractmethod
-    def train(self, X_train: pd.DataFrame, y_train: pd.Series) -> None:
+    def train(self, X_train: pd.DataFrame, y_train: pd.Series, sample_weight: Optional[np.ndarray] = None) -> None:
         """Train the model."""
         pass
     
@@ -78,10 +78,10 @@ class ModelEnsemble:
         self.weights = weights or {name: 1.0 for name in models.keys()}
         self.is_trained = False
     
-    def train(self, X_train: pd.DataFrame, y_train: pd.Series) -> None:
+    def train(self, X_train: pd.DataFrame, y_train: pd.Series, sample_weight: Optional[np.ndarray] = None) -> None:
         """Train all models in the ensemble."""
         for model in self.models.values():
-            model.train(X_train, y_train)
+            model.train(X_train, y_train, sample_weight=sample_weight)
         self.is_trained = True
     
     def predict(self, X: pd.DataFrame) -> np.ndarray:

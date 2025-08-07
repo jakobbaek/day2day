@@ -47,12 +47,19 @@ class XGBoostModel(BaseModel):
         params = {**default_params, **kwargs}
         self.model = xgb.XGBRegressor(**params)
     
-    def train(self, X_train: pd.DataFrame, y_train: pd.Series) -> None:
+    def train(self, X_train: pd.DataFrame, y_train: pd.Series, sample_weight: Optional[np.ndarray] = None) -> None:
         """Train XGBoost model."""
         self.feature_names = list(X_train.columns)
-        self.model.fit(X_train, y_train)
+        
+        # XGBoost supports sample weights
+        if sample_weight is not None:
+            self.model.fit(X_train, y_train, sample_weight=sample_weight)
+            logger.info(f"Trained {self.name} model with {len(X_train)} samples and exponential decay weights")
+        else:
+            self.model.fit(X_train, y_train)
+            logger.info(f"Trained {self.name} model with {len(X_train)} samples")
+        
         self.is_trained = True
-        logger.info(f"Trained {self.name} model with {len(X_train)} samples")
     
     def predict(self, X: pd.DataFrame) -> np.ndarray:
         """Make predictions with XGBoost."""
@@ -88,12 +95,19 @@ class RandomForestModel(BaseModel):
         params = {**default_params, **kwargs}
         self.model = RandomForestRegressor(**params)
     
-    def train(self, X_train: pd.DataFrame, y_train: pd.Series) -> None:
+    def train(self, X_train: pd.DataFrame, y_train: pd.Series, sample_weight: Optional[np.ndarray] = None) -> None:
         """Train Random Forest model."""
         self.feature_names = list(X_train.columns)
-        self.model.fit(X_train, y_train)
+        
+        # RandomForest supports sample weights
+        if sample_weight is not None:
+            self.model.fit(X_train, y_train, sample_weight=sample_weight)
+            logger.info(f"Trained {self.name} model with {len(X_train)} samples and exponential decay weights")
+        else:
+            self.model.fit(X_train, y_train)
+            logger.info(f"Trained {self.name} model with {len(X_train)} samples")
+        
         self.is_trained = True
-        logger.info(f"Trained {self.name} model with {len(X_train)} samples")
     
     def predict(self, X: pd.DataFrame) -> np.ndarray:
         """Make predictions with Random Forest."""
@@ -119,12 +133,19 @@ class LinearRegressionModel(BaseModel):
         super().__init__(name, **kwargs)
         self.model = LinearRegression(**kwargs)
     
-    def train(self, X_train: pd.DataFrame, y_train: pd.Series) -> None:
+    def train(self, X_train: pd.DataFrame, y_train: pd.Series, sample_weight: Optional[np.ndarray] = None) -> None:
         """Train linear regression model."""
         self.feature_names = list(X_train.columns)
-        self.model.fit(X_train, y_train)
+        
+        # LinearRegression supports sample weights
+        if sample_weight is not None:
+            self.model.fit(X_train, y_train, sample_weight=sample_weight)
+            logger.info(f"Trained {self.name} model with {len(X_train)} samples and exponential decay weights")
+        else:
+            self.model.fit(X_train, y_train)
+            logger.info(f"Trained {self.name} model with {len(X_train)} samples")
+        
         self.is_trained = True
-        logger.info(f"Trained {self.name} model with {len(X_train)} samples")
     
     def predict(self, X: pd.DataFrame) -> np.ndarray:
         """Make predictions with linear regression."""
@@ -159,12 +180,19 @@ class RidgeRegressionModel(BaseModel):
         params = {**default_params, **kwargs}
         self.model = Ridge(**params)
     
-    def train(self, X_train: pd.DataFrame, y_train: pd.Series) -> None:
+    def train(self, X_train: pd.DataFrame, y_train: pd.Series, sample_weight: Optional[np.ndarray] = None) -> None:
         """Train ridge regression model."""
         self.feature_names = list(X_train.columns)
-        self.model.fit(X_train, y_train)
+        
+        # Ridge supports sample weights
+        if sample_weight is not None:
+            self.model.fit(X_train, y_train, sample_weight=sample_weight)
+            logger.info(f"Trained {self.name} model with {len(X_train)} samples and exponential decay weights")
+        else:
+            self.model.fit(X_train, y_train)
+            logger.info(f"Trained {self.name} model with {len(X_train)} samples")
+        
         self.is_trained = True
-        logger.info(f"Trained {self.name} model with {len(X_train)} samples")
     
     def predict(self, X: pd.DataFrame) -> np.ndarray:
         """Make predictions with ridge regression."""
@@ -199,12 +227,19 @@ class LassoRegressionModel(BaseModel):
         params = {**default_params, **kwargs}
         self.model = Lasso(**params)
     
-    def train(self, X_train: pd.DataFrame, y_train: pd.Series) -> None:
+    def train(self, X_train: pd.DataFrame, y_train: pd.Series, sample_weight: Optional[np.ndarray] = None) -> None:
         """Train lasso regression model."""
         self.feature_names = list(X_train.columns)
-        self.model.fit(X_train, y_train)
+        
+        # Lasso supports sample weights
+        if sample_weight is not None:
+            self.model.fit(X_train, y_train, sample_weight=sample_weight)
+            logger.info(f"Trained {self.name} model with {len(X_train)} samples and exponential decay weights")
+        else:
+            self.model.fit(X_train, y_train)
+            logger.info(f"Trained {self.name} model with {len(X_train)} samples")
+        
         self.is_trained = True
-        logger.info(f"Trained {self.name} model with {len(X_train)} samples")
     
     def predict(self, X: pd.DataFrame) -> np.ndarray:
         """Make predictions with lasso regression."""
@@ -240,12 +275,19 @@ class SVRModel(BaseModel):
         params = {**default_params, **kwargs}
         self.model = SVR(**params)
     
-    def train(self, X_train: pd.DataFrame, y_train: pd.Series) -> None:
+    def train(self, X_train: pd.DataFrame, y_train: pd.Series, sample_weight: Optional[np.ndarray] = None) -> None:
         """Train SVR model."""
         self.feature_names = list(X_train.columns)
-        self.model.fit(X_train, y_train)
+        
+        # SVR supports sample weights
+        if sample_weight is not None:
+            self.model.fit(X_train, y_train, sample_weight=sample_weight)
+            logger.info(f"Trained {self.name} model with {len(X_train)} samples and exponential decay weights")
+        else:
+            self.model.fit(X_train, y_train)
+            logger.info(f"Trained {self.name} model with {len(X_train)} samples")
+        
         self.is_trained = True
-        logger.info(f"Trained {self.name} model with {len(X_train)} samples")
     
     def predict(self, X: pd.DataFrame) -> np.ndarray:
         """Make predictions with SVR."""
@@ -283,12 +325,20 @@ class MLPModel(BaseModel):
         params = {**default_params, **kwargs}
         self.model = MLPRegressor(**params)
     
-    def train(self, X_train: pd.DataFrame, y_train: pd.Series) -> None:
+    def train(self, X_train: pd.DataFrame, y_train: pd.Series, sample_weight: Optional[np.ndarray] = None) -> None:
         """Train MLP model."""
         self.feature_names = list(X_train.columns)
-        self.model.fit(X_train, y_train)
+        
+        # MLPRegressor does NOT support sample weights - warn if provided
+        if sample_weight is not None:
+            logger.warning(f"MLPRegressor does not support sample weights - training {self.name} without exponential decay")
+            self.model.fit(X_train, y_train)
+            logger.info(f"Trained {self.name} model with {len(X_train)} samples (weights ignored)")
+        else:
+            self.model.fit(X_train, y_train)
+            logger.info(f"Trained {self.name} model with {len(X_train)} samples")
+        
         self.is_trained = True
-        logger.info(f"Trained {self.name} model with {len(X_train)} samples")
     
     def predict(self, X: pd.DataFrame) -> np.ndarray:
         """Make predictions with MLP."""

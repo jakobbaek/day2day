@@ -13,6 +13,35 @@ from ..config.settings import settings
 logger = logging.getLogger(__name__)
 
 
+def calculate_exponential_decay_weights(n_samples: int, decay_factor: float = 0.95) -> np.ndarray:
+    """
+    Calculate exponential decay weights for training samples.
+    
+    More recent data points (later in time) get higher weights.
+    
+    Args:
+        n_samples: Number of training samples
+        decay_factor: Decay factor (0.0 to 1.0). Higher values give more weight to recent data.
+                     0.95 = slow decay (gradual weighting)
+                     0.90 = medium decay 
+                     0.80 = fast decay (strong recent bias)
+    
+    Returns:
+        Array of weights where recent samples have higher weights
+    """
+    if not 0.0 <= decay_factor <= 1.0:
+        raise ValueError(f"decay_factor must be between 0.0 and 1.0, got {decay_factor}")
+    
+    # Create weights: most recent sample gets weight 1.0, earlier samples decay exponentially
+    indices = np.arange(n_samples)
+    weights = decay_factor ** (n_samples - 1 - indices)
+    
+    # Normalize weights so they sum to n_samples (maintains same total weight as uniform)
+    weights = weights * (n_samples / np.sum(weights))
+    
+    return weights
+
+
 class ModelTrainer:
     """Handles model training and management."""
     
@@ -215,7 +244,10 @@ class ModelTrainer:
     
     def train_model(self, model_type: str, model_name: str, 
                    X_train: pd.DataFrame, y_train: pd.Series,
-                   verbose: bool = False, **model_params) -> BaseModel:
+                   verbose: bool = False, 
+                   use_exponential_decay: bool = False,
+                   decay_factor: float = 0.95,
+                   **model_params) -> BaseModel:
         """
         Train a single model.
         
@@ -225,6 +257,8 @@ class ModelTrainer:
             X_train: Training features
             y_train: Training target
             verbose: Whether to print detailed parameter information
+            use_exponential_decay: Whether to apply exponential decay weights (recent data weighted more)
+            decay_factor: Decay factor for exponential weights (0.0-1.0, higher = more recent bias)
             **model_params: Model-specific parameters
             
         Returns:
@@ -261,11 +295,24 @@ class ModelTrainer:
             null_percentage = (null_count / total_cells) * 100
             logger.info(f"  Null Values: {null_count:,} / {total_cells:,} cells ({null_percentage:.2f}%)")
         
+        # Calculate exponential decay weights if enabled
+        sample_weights = None
+        if use_exponential_decay:
+            sample_weights = calculate_exponential_decay_weights(len(X_train), decay_factor)
+            
+            if verbose:
+                logger.info(f"⚖️  Exponential Decay Weights for {model_name}:")
+                logger.info(f"  Decay Factor: {decay_factor}")
+                logger.info(f"  Weight Range: {sample_weights.min():.6f} to {sample_weights.max():.6f}")
+                logger.info(f"  Weight Ratio (max/min): {sample_weights.max()/sample_weights.min():.2f}x")
+                logger.info(f"  Recent samples (last 10%) get ~{sample_weights[-len(sample_weights)//10:].mean():.2f}x average weight")
+                logger.info(f"  Older samples (first 10%) get ~{sample_weights[:len(sample_weights)//10].mean():.2f}x average weight")
+        
         # Create model
         model = create_model(model_type, name=model_name, **model_params)
         
-        # Train model
-        model.train(X_train, y_train)
+        # Train model with or without weights
+        model.train(X_train, y_train, sample_weight=sample_weights)
         
         # DEBUG: Check if model actually learned something
         if hasattr(model, 'model') and hasattr(model.model, 'feature_importances_'):
@@ -365,7 +412,9 @@ class ModelTrainer:
                          model_configs: Dict[str, Dict[str, Any]],
                          test_size: float = 0.2,
                          split_method: str = 'temporal',
-                         verbose: bool = False) -> Dict[str, BaseModel]:
+                         verbose: bool = False,
+                         use_exponential_decay: bool = False,
+                         decay_factor: float = 0.95) -> Dict[str, BaseModel]:
         """
         Train a suite of models.
         
@@ -378,6 +427,8 @@ class ModelTrainer:
             test_size: Test set size
             split_method: Method for train/test split
             verbose: Whether to print detailed parameter information for each model
+            use_exponential_decay: Whether to apply exponential decay weights (recent data weighted more)
+            decay_factor: Decay factor for exponential weights (0.0-1.0, higher = more recent bias)
             
         Returns:
             Dictionary of trained models
@@ -390,6 +441,9 @@ class ModelTrainer:
             logger.info(f"  Suite Name: {training_data_title}_{target_instrument}")
             logger.info(f"  Test Size: {test_size} ({test_size*100:.1f}%)")
             logger.info(f"  Split Method: {split_method}")
+            logger.info(f"  Exponential Decay: {use_exponential_decay}")
+            if use_exponential_decay:
+                logger.info(f"  Decay Factor: {decay_factor} (higher = more recent bias)")
             logger.info(f"  Models to Train: {len(model_configs)}")
             for i, (name, config) in enumerate(model_configs.items(), 1):
                 logger.info(f"    {i}. {name} ({config['type']})")
@@ -421,7 +475,11 @@ class ModelTrainer:
             
             try:
                 model = self.train_model(
-                    model_type, model_name, X_train, y_train, verbose=verbose, **model_params
+                    model_type, model_name, X_train, y_train, 
+                    verbose=verbose, 
+                    use_exponential_decay=use_exponential_decay,
+                    decay_factor=decay_factor,
+                    **model_params
                 )
                 trained_models[model_name] = model
                 
