@@ -255,6 +255,25 @@ class ProbabilityBasedStrategy(TradingStrategy):
         self.take_profit_threshold = take_profit_threshold
         self.stop_loss_threshold = stop_loss_threshold
         self.threshold_is_fraction = threshold_is_fraction
+        
+        # Log strategy configuration for debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"📊 Strategy Configuration:")
+        logger.info(f"  Initial Capital: ${initial_capital:,.2f}")
+        logger.info(f"  Min Probability: {min_probability:.1%}")
+        logger.info(f"  Price Increase Threshold: {price_increase_threshold} {'(fraction)' if threshold_is_fraction else '(absolute)'}")
+        logger.info(f"  Take Profit Threshold: {take_profit_threshold} {'(fraction)' if threshold_is_fraction else '(absolute)'}")
+        logger.info(f"  Stop Loss Threshold: {stop_loss_threshold} {'(fraction)' if threshold_is_fraction else '(absolute)'}")
+        logger.info(f"  Max Positions: {kwargs.get('max_positions', 1)}")
+        logger.info(f"  Exchange Fee: {kwargs.get('exchange_fee', 0.0008):.4f}")
+        logger.info(f"  Fixed Cost per Trade: ${kwargs.get('fixed_cost', 20.0):.2f}")
+        
+        if threshold_is_fraction:
+            logger.info(f"  💡 Example thresholds for $100 stock:")
+            logger.info(f"    Required price increase: ${100 * price_increase_threshold:.2f}")
+            logger.info(f"    Take profit at: ${100 * (1 + take_profit_threshold):.2f}")
+            logger.info(f"    Stop loss at: ${100 * (1 - stop_loss_threshold):.2f}")
     
     def should_enter_position(self, 
                             current_price: float,
@@ -273,12 +292,32 @@ class ProbabilityBasedStrategy(TradingStrategy):
         Returns:
             Tuple of (should_enter, position_size)
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Debug: Log every 100th evaluation to avoid spam
+        debug_counter = getattr(self, '_debug_counter', 0)
+        self._debug_counter = debug_counter + 1
+        should_debug = (debug_counter % 100 == 0) or debug_counter < 10
+        
+        if should_debug:
+            logger.info(f"🔍 Entry evaluation #{debug_counter}:")
+            logger.info(f"  Time: {timestamp}")
+            logger.info(f"  Price: ${current_price:.4f}")
+            logger.info(f"  Prediction: ${prediction:.4f}")
+            logger.info(f"  Probability: {probability:.4f}")
+            logger.info(f"  Open positions: {len(self.open_trades)}/{self.max_positions}")
+        
         # Check if we have room for more positions
         if len(self.open_trades) >= self.max_positions:
+            if should_debug:
+                logger.info(f"  ❌ Max positions reached ({len(self.open_trades)}/{self.max_positions})")
             return False, 0.0
         
         # Check if probability meets threshold
         if probability < self.min_probability:
+            if should_debug:
+                logger.info(f"  ❌ Probability too low: {probability:.4f} < {self.min_probability}")
             return False, 0.0
         
         # Check if predicted increase meets threshold
@@ -287,12 +326,35 @@ class ProbabilityBasedStrategy(TradingStrategy):
         else:
             required_increase = self.price_increase_threshold
         
+        predicted_gain = prediction - current_price
+        
         if prediction < current_price + required_increase:
+            if should_debug:
+                logger.info(f"  ❌ Predicted gain too small:")
+                logger.info(f"    Predicted gain: ${predicted_gain:.4f}")
+                logger.info(f"    Required gain: ${required_increase:.4f}")
+                logger.info(f"    Threshold: {self.price_increase_threshold} {'(fraction)' if self.threshold_is_fraction else '(absolute)'}")
             return False, 0.0
         
         # Calculate position size
         available_capital = self.get_available_capital()
         position_size = self.calculate_position_size(current_price, available_capital)
+        
+        if position_size <= 0:
+            if should_debug:
+                logger.info(f"  ❌ No capital available for position (capital: ${available_capital:.2f})")
+            return False, 0.0
+        
+        # All checks passed - would enter position!
+        if should_debug:
+            logger.info(f"  ✅ WOULD ENTER POSITION!")
+            logger.info(f"    Position size: {position_size:.2f} shares")
+            logger.info(f"    Capital used: ${current_price * position_size:.2f}")
+            logger.info(f"    Available capital: ${available_capital:.2f}")
+        
+        # Log every successful entry evaluation for first 50 attempts
+        if not should_debug and debug_counter < 50:
+            logger.info(f"🎯 Entry opportunity #{debug_counter}: Price=${current_price:.4f}, Pred=${prediction:.4f}, Prob={probability:.4f}")
         
         return position_size > 0, position_size
     

@@ -136,6 +136,20 @@ class Backtester:
             trades=strategy.closed_trades
         )
         
+        # Debug summary
+        if hasattr(strategy, '_debug_counter'):
+            logger.info(f"📈 Backtest Summary:")
+            logger.info(f"  Total evaluations: {strategy._debug_counter}")
+            logger.info(f"  Trades executed: {len(strategy.closed_trades)}")
+            logger.info(f"  Final capital: ${strategy.current_capital:,.2f}")
+            
+            if len(strategy.closed_trades) == 0:
+                logger.warning(f"⚠️  No trades executed! This suggests strategy parameters are too restrictive.")
+                logger.warning(f"   Consider adjusting:")
+                logger.warning(f"   - Lower min_probability (currently {getattr(strategy, 'min_probability', 'N/A')})")
+                logger.warning(f"   - Lower price_increase_threshold (currently {getattr(strategy, 'price_increase_threshold', 'N/A')})")
+                logger.warning(f"   - Check if model predictions are reasonable")
+        
         return results
     
     def _get_entry_signal(self,
