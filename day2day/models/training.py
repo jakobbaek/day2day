@@ -822,39 +822,38 @@ class ModelTrainer:
                 else:
                     logger.warning("Could not find raw data file - using processed data (may contain percentages)")
                     high_col = f"high_{target_instrument}"
-                    # Get actual HIGH prices for test set indices
-                    actual_prices = original_df.loc[X_test.index, high_col]
-                    test_df['target_actual'] = actual_prices
                     
-                    # DEBUG: Check the actual values being saved
-                    logger.info(f"Added target_actual column with HIGH prices from {high_col}")
-                    logger.info(f"Sample target_actual values: {actual_prices.head().tolist()}")
-                    logger.info(f"Target_actual range: {actual_prices.min():.6f} to {actual_prices.max():.6f}")
-                    
-                    # Check if these are still percentage values (they shouldn't be!)
-                    if actual_prices.abs().median() < 1.0:
-                        logger.error(f"🚨 CRITICAL: target_actual contains small values (median={actual_prices.abs().median():.6f})")
-                        logger.error(f"This suggests the 'original_df' also contains percentage values!")
-                        logger.error(f"We need to load the TRULY original data before percentage conversion")
-                    
-                    # Also add current price columns for all instruments for position sizing
-                    price_columns = [col for col in original_df.columns if any(price_type in col for price_type in ['high_', 'low_', 'open_', 'close_'])]
-                    
-                    for col in price_columns:
-                        if col in original_df.columns:
-                            actual_values = original_df.loc[X_test.index, col]
-                            # Only add if not all NaN (some columns might have been filtered out)
-                            if not actual_values.isna().all():
-                                test_df[f"{col}_actual"] = actual_values
-                    
-                    logger.info(f"Added {len(price_columns)} actual price columns for realistic backtesting")
+                    if high_col in original_df.columns:
+                        # Get actual HIGH prices for test set indices
+                        actual_prices = original_df.loc[X_test.index, high_col]
+                        test_df['target_actual'] = actual_prices
+                        
+                        # DEBUG: Check the actual values being saved
+                        logger.info(f"Added target_actual column with HIGH prices from {high_col}")
+                        logger.info(f"Sample target_actual values: {actual_prices.head().tolist()}")
+                        logger.info(f"Target_actual range: {actual_prices.min():.6f} to {actual_prices.max():.6f}")
+                        
+                        # Check if these are still percentage values (they shouldn't be!)
+                        if actual_prices.abs().median() < 1.0:
+                            logger.error(f"🚨 CRITICAL: target_actual contains small values (median={actual_prices.abs().median():.6f})")
+                            logger.error(f"This suggests the 'original_df' also contains percentage values!")
+                            logger.error(f"We need to load the TRULY original data before percentage conversion")
+                        
+                        # Also add current price columns for all instruments for position sizing
+                        price_columns = [col for col in original_df.columns if any(price_type in col for price_type in ['high_', 'low_', 'open_', 'close_'])]
+                        
+                        for col in price_columns:
+                            if col in original_df.columns:
+                                actual_values = original_df.loc[X_test.index, col]
+                                # Only add if not all NaN (some columns might have been filtered out)
+                                if not actual_values.isna().all():
+                                    test_df[f"{col}_actual"] = actual_values
+                        
+                        logger.info(f"Added {len(price_columns)} actual price columns for realistic backtesting")
+                    else:
+                        logger.warning(f"Could not find {high_col} in processed data - backtesting may use percentage values")
                     
                     # Add metadata about price reconstruction
-                    test_df['uses_percentage_features'] = True
-                    test_df['target_instrument'] = target_instrument
-                    
-                else:
-                    logger.warning(f"Could not find {high_col} in original data - backtesting may use percentage values")
                     test_df['uses_percentage_features'] = True
                     test_df['target_instrument'] = target_instrument
             else:
