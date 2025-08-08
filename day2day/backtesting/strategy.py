@@ -92,6 +92,9 @@ class TradingStrategy(ABC):
         Returns:
             Position size in shares
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
         # Distribute capital across max positions
         position_capital = available_capital / self.max_positions
         
@@ -103,6 +106,26 @@ class TradingStrategy(ABC):
         
         # Calculate shares (accounting for entry fee)
         shares = effective_capital / (current_price * (1 + self.exchange_fee))
+        
+        # Debug position sizing for first few trades
+        debug_counter = getattr(self, '_position_size_counter', 0)
+        self._position_size_counter = debug_counter + 1
+        
+        if debug_counter < 10:
+            logger.info(f"🔢 POSITION SIZE CALCULATION #{debug_counter + 1}:")
+            logger.info(f"  Current Price: ${current_price:.6f}")
+            logger.info(f"  Available Capital: ${available_capital:.2f}")
+            logger.info(f"  Position Capital: ${position_capital:.2f}")
+            logger.info(f"  Effective Capital: ${effective_capital:.2f}")
+            logger.info(f"  Calculated Shares: {shares:.2f}")
+            logger.info(f"  Position Value: ${shares * current_price:.2f}")
+            
+            # Check for unrealistic position sizes
+            if shares > 100000:  # More than 100k shares
+                logger.error(f"🚨 MASSIVE POSITION SIZE DETECTED!")
+                logger.error(f"   Shares: {shares:,.0f}")
+                logger.error(f"   This suggests extremely low prices or calculation bug!")
+                logger.error(f"   Price may be in wrong units (e.g., percentage instead of dollars)")
         
         return max(0.0, shares)
     
@@ -123,9 +146,15 @@ class TradingStrategy(ABC):
         Returns:
             New trade object
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
         # Calculate fees
         position_value = current_price * quantity
         entry_fee = position_value * self.exchange_fee + self.fixed_cost
+        
+        # Debug capital tracking
+        capital_before = self.current_capital
         
         # Create trade
         trade = Trade(
@@ -141,6 +170,15 @@ class TradingStrategy(ABC):
         
         # Update capital
         self.current_capital -= position_value + entry_fee
+        
+        # Debug logging for first few trades
+        if len(self.closed_trades) + len(self.open_trades) <= 10:
+            logger.info(f"📈 ENTER POSITION #{len(self.closed_trades) + len(self.open_trades)}:")
+            logger.info(f"  Price: ${current_price:.4f}, Quantity: {quantity:.2f}")
+            logger.info(f"  Position Value: ${position_value:.2f}")
+            logger.info(f"  Entry Fee: ${entry_fee:.2f}")
+            logger.info(f"  Capital: ${capital_before:.2f} → ${self.current_capital:.2f}")
+            logger.info(f"  Capital Change: ${capital_before - self.current_capital:.2f}")
         
         # Add to open trades
         self.open_trades.append(trade)
@@ -162,9 +200,15 @@ class TradingStrategy(ABC):
         Returns:
             Updated trade object
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
         # Calculate exit fees
         position_value = current_price * trade.quantity
         exit_fee = position_value * self.exchange_fee + self.fixed_cost
+        
+        # Debug capital tracking
+        capital_before = self.current_capital
         
         # Update trade
         trade.exit_time = timestamp
@@ -182,6 +226,19 @@ class TradingStrategy(ABC):
         
         # Update capital
         self.current_capital += position_value - exit_fee
+        
+        # Debug logging for first few trades
+        if len(self.closed_trades) <= 10:
+            logger.info(f"📉 EXIT POSITION #{len(self.closed_trades) + 1}:")
+            logger.info(f"  Entry: ${trade.entry_price:.4f} → Exit: ${current_price:.4f}")
+            logger.info(f"  Quantity: {trade.quantity:.2f}")
+            logger.info(f"  Position Value: ${position_value:.2f}")
+            logger.info(f"  Exit Fee: ${exit_fee:.2f}")
+            logger.info(f"  Total Fees: ${trade.fees:.2f}")
+            logger.info(f"  Gross PnL: ${gross_pnl:.2f}")
+            logger.info(f"  Net PnL: ${trade.pnl:.2f}")
+            logger.info(f"  Capital: ${capital_before:.2f} → ${self.current_capital:.2f}")
+            logger.info(f"  Capital Change: ${self.current_capital - capital_before:.2f}")
         
         # Move to closed trades
         self.open_trades.remove(trade)
@@ -224,16 +281,48 @@ class TradingStrategy(ABC):
         Returns:
             Total portfolio value
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
         total_value = self.current_capital
         
+        # Debug counter for portfolio value calculations
+        debug_counter = getattr(self, '_portfolio_debug_counter', 0)
+        self._portfolio_debug_counter = debug_counter + 1
+        should_debug = debug_counter < 10 or debug_counter % 1000 == 0
+        
+        if should_debug:
+            logger.info(f"💰 PORTFOLIO VALUE #{debug_counter}:")
+            logger.info(f"  Current Price: ${current_price:.4f}")
+            logger.info(f"  Cash Capital: ${self.current_capital:.2f}")
+            logger.info(f"  Open Positions: {len(self.open_trades)}")
+        
         # Add value of open positions
-        for trade in self.open_trades:
+        total_position_value = 0
+        for i, trade in enumerate(self.open_trades):
             if trade.direction == 'long':
                 position_value = current_price * trade.quantity
             else:
                 position_value = trade.entry_price * trade.quantity - (current_price - trade.entry_price) * trade.quantity
             
-            total_value += position_value
+            total_position_value += position_value
+            
+            if should_debug:
+                logger.info(f"  Position {i+1}: {trade.quantity:.2f} shares @ ${current_price:.4f} = ${position_value:.2f}")
+        
+        total_value += total_position_value
+        
+        if should_debug:
+            logger.info(f"  Total Position Value: ${total_position_value:.2f}")
+            logger.info(f"  TOTAL PORTFOLIO: ${total_value:.2f}")
+            
+            # Check for unrealistic values
+            if total_value > self.initial_capital * 10:  # More than 10x initial capital
+                logger.error(f"🚨 UNREALISTIC PORTFOLIO VALUE DETECTED!")
+                logger.error(f"   Initial: ${self.initial_capital:.2f}")
+                logger.error(f"   Current: ${total_value:.2f}")
+                logger.error(f"   Multiplier: {total_value / self.initial_capital:.1f}x")
+                logger.error(f"   This suggests a calculation bug!")
         
         return total_value
 
@@ -295,10 +384,10 @@ class ProbabilityBasedStrategy(TradingStrategy):
         import logging
         logger = logging.getLogger(__name__)
         
-        # Debug: Log every 100th evaluation to avoid spam
+        # Debug: Log every 500th evaluation to avoid spam (less verbose for speed)
         debug_counter = getattr(self, '_debug_counter', 0)
         self._debug_counter = debug_counter + 1
-        should_debug = (debug_counter % 100 == 0) or debug_counter < 10
+        should_debug = (debug_counter % 500 == 0) or debug_counter < 5
         
         if should_debug:
             logger.info(f"🔍 Entry evaluation #{debug_counter}:")

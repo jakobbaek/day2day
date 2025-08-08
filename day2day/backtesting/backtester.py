@@ -81,6 +81,15 @@ class Backtester:
         """
         logger.info(f"Running backtest with {len(test_data)} data points")
         
+        # CRITICAL FIX: Use actual prices for backtesting if available
+        if 'target_actual' in test_data.columns:
+            price_column = 'target_actual'
+            logger.info("✅ Using target_actual column for realistic backtesting with actual prices")
+        elif 'uses_percentage_features' in test_data.columns and test_data['uses_percentage_features'].iloc[0]:
+            logger.warning("⚠️  Percentage features detected but no actual prices available - results may be unrealistic")
+        
+        logger.info(f"Price column for backtesting: {price_column}")
+        
         # Ensure data is sorted by datetime
         test_data = test_data.sort_values('datetime').reset_index(drop=True)
         
@@ -171,8 +180,12 @@ class Backtester:
         """
         # For model-based strategies, we need to provide prediction and probability
         if hasattr(strategy, 'get_prediction_and_probability'):
-            # Prepare features (exclude target, datetime, and trading_eligible)
-            exclude_cols = ['target', 'datetime', 'trading_eligible']
+            # Prepare features (exclude target, datetime, trading_eligible, and actual price columns)
+            exclude_cols = ['target', 'target_actual', 'datetime', 'trading_eligible', 
+                           'uses_percentage_features', 'target_instrument']
+            # Also exclude any columns ending with '_actual' (reconstructed price columns)
+            exclude_cols.extend([col for col in row.index if col.endswith('_actual')])
+            
             feature_cols = [col for col in row.index if col not in exclude_cols]
             features = row[feature_cols].to_frame().T
             

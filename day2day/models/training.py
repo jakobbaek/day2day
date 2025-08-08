@@ -620,6 +620,9 @@ class ModelTrainer:
             test_df['trading_eligible'] = original_df.loc[X_test.index, 'trading_eligible']
             logger.info("Included trading_eligible flag in test data for day trading evaluation")
         
+        # CRITICAL FIX: Save actual prices for backtesting if percentage features were used
+        self._save_actual_prices_for_backtesting(test_df, original_df, X_test, target_instrument)
+        
         test_df.to_csv(test_file, index=False)
         
         # Save metadata
@@ -765,3 +768,96 @@ class ModelTrainer:
     def list_available_models(self) -> List[str]:
         """Get list of available model types."""
         return list(get_available_models().keys())
+    
+    def _save_actual_prices_for_backtesting(self, test_df: pd.DataFrame, original_df: pd.DataFrame, 
+                                          X_test: pd.DataFrame, target_instrument: str) -> None:
+        """
+        Save actual prices for backtesting when percentage features are used.
+        
+        Args:
+            test_df: Test DataFrame being prepared
+            original_df: Original processed DataFrame
+            X_test: Test features DataFrame
+            target_instrument: Target instrument name
+        """
+        try:
+            # Detect if percentage features are being used by checking if target values are small
+            target_values = test_df['target']
+            uses_percentage_features = self._detect_percentage_features(target_values, original_df)
+            
+            if uses_percentage_features:
+                logger.info("🔧 Detected percentage features - reconstructing actual prices for backtesting")
+                
+                # Find the target instrument's high price column in original data
+                high_col = f"high_{target_instrument}"
+                
+                if high_col in original_df.columns:
+                    # Get actual HIGH prices for test set indices
+                    actual_prices = original_df.loc[X_test.index, high_col]
+                    test_df['target_actual'] = actual_prices
+                    logger.info(f"Added target_actual column with HIGH prices from {high_col}")
+                    
+                    # Also add current price columns for all instruments for position sizing
+                    price_columns = [col for col in original_df.columns if any(price_type in col for price_type in ['high_', 'low_', 'open_', 'close_'])]
+                    
+                    for col in price_columns:
+                        if col in original_df.columns:
+                            actual_values = original_df.loc[X_test.index, col]
+                            # Only add if not all NaN (some columns might have been filtered out)
+                            if not actual_values.isna().all():
+                                test_df[f"{col}_actual"] = actual_values
+                    
+                    logger.info(f"Added {len(price_columns)} actual price columns for realistic backtesting")
+                    
+                    # Add metadata about price reconstruction
+                    test_df['uses_percentage_features'] = True
+                    test_df['target_instrument'] = target_instrument
+                    
+                else:
+                    logger.warning(f"Could not find {high_col} in original data - backtesting may use percentage values")
+                    test_df['uses_percentage_features'] = True
+                    test_df['target_instrument'] = target_instrument
+            else:
+                logger.info("Actual price features detected - no price reconstruction needed")
+                test_df['uses_percentage_features'] = False
+                
+        except Exception as e:
+            logger.warning(f"Could not reconstruct actual prices: {e}")
+            logger.warning("Backtesting will use percentage values - results may be unrealistic")
+            test_df['uses_percentage_features'] = True
+    
+    def _detect_percentage_features(self, target_values: pd.Series, original_df: pd.DataFrame) -> bool:
+        """
+        Detect if percentage features are being used based on target value ranges.
+        
+        Args:
+            target_values: Target values from test set
+            original_df: Original DataFrame
+            
+        Returns:
+            True if percentage features are detected
+        """
+        # Remove NaN values for analysis
+        clean_values = target_values.dropna()
+        
+        if len(clean_values) == 0:
+            return False
+        
+        # Check if target values are in typical percentage range (-1 to 1)
+        value_range = clean_values.max() - clean_values.min()
+        median_abs_value = clean_values.abs().median()
+        
+        # Percentage features typically have:
+        # - Small absolute values (median < 0.1)
+        # - Range typically less than 2.0
+        # - Values centered around 0
+        is_percentage = (median_abs_value < 0.1 and 
+                        value_range < 2.0 and 
+                        abs(clean_values.mean()) < 0.05)
+        
+        if is_percentage:
+            logger.info(f"Percentage features detected: median_abs={median_abs_value:.4f}, range={value_range:.4f}")
+        else:
+            logger.info(f"Actual price features detected: median_abs={median_abs_value:.4f}, range={value_range:.4f}")
+        
+        return is_percentage
