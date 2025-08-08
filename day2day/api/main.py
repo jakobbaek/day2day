@@ -155,7 +155,7 @@ class Day2DayAPI:
                     model_configs: Optional[Dict[str, Dict[str, Any]]] = None,
                     verbose: bool = False,
                     use_exponential_decay: bool = False,
-                    decay_factor: float = 0.95,
+                    decay_factor: float = 0.9995,
                     **kwargs) -> Dict[str, Any]:
         """
         Train a suite of models.

@@ -13,7 +13,29 @@ from ..config.settings import settings
 logger = logging.getLogger(__name__)
 
 
-def calculate_exponential_decay_weights(n_samples: int, decay_factor: float = 0.95) -> np.ndarray:
+def suggest_decay_factor(n_samples: int) -> float:
+    """
+    Suggest appropriate decay factor based on dataset size.
+    
+    Args:
+        n_samples: Number of training samples
+        
+    Returns:
+        Recommended decay factor
+    """
+    if n_samples < 1000:
+        return 0.99      # Small dataset - can use lower factor
+    elif n_samples < 10000:
+        return 0.995     # Medium dataset
+    elif n_samples < 50000:
+        return 0.999     # Large dataset
+    elif n_samples < 100000:
+        return 0.9995    # Very large dataset
+    else:
+        return 0.9999    # Extremely large dataset
+
+
+def calculate_exponential_decay_weights(n_samples: int, decay_factor: float = 0.9995) -> np.ndarray:
     """
     Calculate exponential decay weights for training samples.
     
@@ -21,10 +43,13 @@ def calculate_exponential_decay_weights(n_samples: int, decay_factor: float = 0.
     
     Args:
         n_samples: Number of training samples
-        decay_factor: Decay factor (0.0 to 1.0). Higher values give more weight to recent data.
-                     0.95 = slow decay (gradual weighting)
-                     0.90 = medium decay 
-                     0.80 = fast decay (strong recent bias)
+        decay_factor: Decay factor (0.0 to 1.0). For large datasets, use values very close to 1.0:
+                     0.9999 = very gradual decay (suitable for 10K-50K samples)
+                     0.9995 = moderate decay (suitable for 50K-100K samples) 
+                     0.999 = stronger decay (suitable for 100K+ samples)
+                     0.99 = strong decay (only for very large datasets >500K)
+                     
+                     Note: Values like 0.95, 0.90 create extreme weight ratios with large datasets!
     
     Returns:
         Array of weights where recent samples have higher weights
@@ -32,9 +57,27 @@ def calculate_exponential_decay_weights(n_samples: int, decay_factor: float = 0.
     if not 0.0 <= decay_factor <= 1.0:
         raise ValueError(f"decay_factor must be between 0.0 and 1.0, got {decay_factor}")
     
+    # Warn if decay factor seems too low for dataset size
+    if n_samples > 10000 and decay_factor < 0.995:
+        import logging
+        logger = logging.getLogger(__name__)
+        min_weight_ratio = decay_factor ** (n_samples - 1)
+        logger.warning(f"Decay factor {decay_factor} may be too low for {n_samples:,} samples")
+        logger.warning(f"Oldest sample will have {min_weight_ratio:.2e} relative weight (may cause numerical issues)")
+        logger.warning(f"Consider using decay_factor >= 0.999 for datasets > 10K samples")
+    
     # Create weights: most recent sample gets weight 1.0, earlier samples decay exponentially
     indices = np.arange(n_samples)
     weights = decay_factor ** (n_samples - 1 - indices)
+    
+    # Check for numerical underflow
+    min_weight = np.min(weights)
+    if min_weight < 1e-10:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Numerical underflow detected: min_weight = {min_weight:.2e}")
+        logger.warning("Clipping extremely small weights to prevent numerical issues")
+        weights = np.maximum(weights, 1e-10)
     
     # Normalize weights so they sum to n_samples (maintains same total weight as uniform)
     weights = weights * (n_samples / np.sum(weights))
@@ -246,7 +289,7 @@ class ModelTrainer:
                    X_train: pd.DataFrame, y_train: pd.Series,
                    verbose: bool = False, 
                    use_exponential_decay: bool = False,
-                   decay_factor: float = 0.95,
+                   decay_factor: float = 0.9995,
                    **model_params) -> BaseModel:
         """
         Train a single model.
@@ -301,12 +344,37 @@ class ModelTrainer:
             sample_weights = calculate_exponential_decay_weights(len(X_train), decay_factor)
             
             if verbose:
+                suggested_factor = suggest_decay_factor(len(X_train))
+                
                 logger.info(f"⚖️  Exponential Decay Weights for {model_name}:")
+                logger.info(f"  Dataset Size: {len(X_train):,} samples")
                 logger.info(f"  Decay Factor: {decay_factor}")
-                logger.info(f"  Weight Range: {sample_weights.min():.6f} to {sample_weights.max():.6f}")
-                logger.info(f"  Weight Ratio (max/min): {sample_weights.max()/sample_weights.min():.2f}x")
-                logger.info(f"  Recent samples (last 10%) get ~{sample_weights[-len(sample_weights)//10:].mean():.2f}x average weight")
-                logger.info(f"  Older samples (first 10%) get ~{sample_weights[:len(sample_weights)//10].mean():.2f}x average weight")
+                logger.info(f"  Suggested Factor: {suggested_factor} (for {len(X_train):,} samples)")
+                
+                if abs(decay_factor - suggested_factor) > 0.001:
+                    logger.info(f"  💡 Consider using {suggested_factor} for better numerical stability")
+                
+                # Show weight distribution
+                min_weight = sample_weights.min()
+                max_weight = sample_weights.max()
+                logger.info(f"  Weight Range: {min_weight:.6f} to {max_weight:.6f}")
+                
+                if min_weight > 0:
+                    weight_ratio = max_weight / min_weight
+                    logger.info(f"  Weight Ratio (max/min): {weight_ratio:.2f}x")
+                    
+                    # More practical statistics
+                    n_recent = len(sample_weights) // 10  # Last 10%
+                    n_old = len(sample_weights) // 10     # First 10%
+                    
+                    recent_avg = sample_weights[-n_recent:].mean()
+                    old_avg = sample_weights[:n_old].mean()
+                    median_weight = np.median(sample_weights)
+                    
+                    logger.info(f"  Recent 10% avg weight: {recent_avg:.6f} ({recent_avg/median_weight:.2f}x median)")
+                    logger.info(f"  Oldest 10% avg weight: {old_avg:.6f} ({old_avg/median_weight:.2f}x median)")
+                else:
+                    logger.warning(f"  ⚠️  Some weights are zero - may cause numerical issues")
         
         # Create model
         model = create_model(model_type, name=model_name, **model_params)
@@ -414,7 +482,7 @@ class ModelTrainer:
                          split_method: str = 'temporal',
                          verbose: bool = False,
                          use_exponential_decay: bool = False,
-                         decay_factor: float = 0.95) -> Dict[str, BaseModel]:
+                         decay_factor: float = 0.9995) -> Dict[str, BaseModel]:
         """
         Train a suite of models.
         

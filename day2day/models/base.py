@@ -40,7 +40,8 @@ class BaseModel(ABC):
             'model': self.model,
             'is_trained': self.is_trained,
             'feature_names': self.feature_names,
-            'config': self.config
+            'config': self.config,
+            'model_type': getattr(self, 'model_type', None)
         }
         joblib.dump(model_data, filepath)
     
@@ -52,6 +53,8 @@ class BaseModel(ABC):
         self.is_trained = model_data['is_trained']
         self.feature_names = model_data['feature_names']
         self.config = model_data['config']
+        # Load model_type if available (for bootstrap file naming compatibility)
+        self.model_type = model_data.get('model_type', None)
     
     def validate_input(self, X: pd.DataFrame) -> None:
         """Validate input data."""

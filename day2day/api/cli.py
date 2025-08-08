@@ -43,7 +43,7 @@ def main():
     train_parser.add_argument('--test-size', type=float, default=0.2, help='Test set size')
     train_parser.add_argument('--verbose', '-v', action='store_true', help='Enable detailed parameter logging for each model')
     train_parser.add_argument('--exponential-decay', action='store_true', help='Apply exponential decay weights (recent data weighted more)')
-    train_parser.add_argument('--decay-factor', type=float, default=0.95, help='Decay factor (0.0-1.0, higher = more recent bias, default: 0.95)')
+    train_parser.add_argument('--decay-factor', type=float, default=0.9995, help='Decay factor (0.0-1.0, use values close to 1.0 for large datasets, default: 0.9995)')
     
     # Bootstrapping
     bootstrap_parser = subparsers.add_parser('bootstrap', help='Run bootstrap analysis')

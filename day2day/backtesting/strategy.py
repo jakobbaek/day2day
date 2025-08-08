@@ -365,9 +365,17 @@ class ModelBasedStrategy(ProbabilityBasedStrategy):
         self.models = self.trainer.load_model_suite(training_data_title, target_instrument)
         self.model = self.models[model_name]
         
-        # Load bootstrap results
+        # Determine model type for bootstrap loading
+        # Extract base model type from model name (e.g., "xgboost_default" -> "xgboost")
+        if hasattr(self.model, 'model_type'):
+            model_type_for_bootstrap = self.model.model_type
+        else:
+            # Fallback: extract from model name by taking first part before underscore
+            model_type_for_bootstrap = model_name.split('_')[0]
+        
+        # Load bootstrap results using the base model type
         self.bootstrap_results = self.bootstrap_estimator.load_bootstrap_results(
-            training_data_title, target_instrument, model_name
+            training_data_title, target_instrument, model_type_for_bootstrap
         )
     
     def get_prediction_and_probability(self, 

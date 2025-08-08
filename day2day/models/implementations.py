@@ -430,6 +430,9 @@ def create_model(model_type: str, name: str = None, **kwargs) -> BaseModel:
     model_name = name or model_type
     
     try:
-        return model_class(name=model_name, **kwargs)
+        model = model_class(name=model_name, **kwargs)
+        # Store the base model type for bootstrap file naming
+        model.model_type = model_type
+        return model
     except ImportError as e:
         raise ValueError(f"Model {model_type} not available: {e}")
