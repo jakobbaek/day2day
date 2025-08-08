@@ -40,6 +40,17 @@ class Backtester:
         
         df = pd.read_csv(test_file)
         
+        # Convert numeric columns that were incorrectly saved as objects
+        exclude_from_conversion = ['datetime', 'trading_eligible']
+        for col in df.columns:
+            if col not in exclude_from_conversion and df[col].dtype == 'object':
+                # Try to convert to numeric, keep as object if conversion fails
+                try:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+                    logger.debug(f"Converted column {col} from object to numeric")
+                except:
+                    logger.warning(f"Could not convert column {col} to numeric")
+        
         # Add datetime index if not present
         if 'datetime' not in df.columns:
             # Create synthetic datetime index
@@ -146,8 +157,15 @@ class Backtester:
         """
         # For model-based strategies, we need to provide prediction and probability
         if hasattr(strategy, 'get_prediction_and_probability'):
-            # Prepare features (exclude target and datetime)
-            features = row.drop(['target', 'datetime']).to_frame().T
+            # Prepare features (exclude target, datetime, and trading_eligible)
+            exclude_cols = ['target', 'datetime', 'trading_eligible']
+            feature_cols = [col for col in row.index if col not in exclude_cols]
+            features = row[feature_cols].to_frame().T
+            
+            # Convert object columns to numeric, replacing non-numeric with NaN
+            for col in features.columns:
+                if features[col].dtype == 'object':
+                    features[col] = pd.to_numeric(features[col], errors='coerce')
             
             try:
                 prediction, probability = strategy.get_prediction_and_probability(
