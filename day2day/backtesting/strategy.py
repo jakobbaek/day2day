@@ -2,6 +2,7 @@
 
 import pandas as pd
 import numpy as np
+import datetime
 from typing import Dict, Any, List, Optional, Tuple
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -337,11 +338,11 @@ class ProbabilityBasedStrategy(TradingStrategy):
     def is_market_hours(self, timestamp: pd.Timestamp) -> bool:
         """Check if timestamp is within market hours."""
         time = timestamp.time()
-        return pd.time(9, 30) <= time <= pd.time(16, 0)
+        return datetime.time(9, 30) <= time <= datetime.time(16, 0)
     
     def is_end_of_day(self, timestamp: pd.Timestamp) -> bool:
         """Check if timestamp is end of trading day."""
-        return timestamp.time() >= pd.time(15, 55)  # 5 minutes before close
+        return timestamp.time() >= datetime.time(15, 55)  # 5 minutes before close
 
 
 class ModelBasedStrategy(ProbabilityBasedStrategy):
