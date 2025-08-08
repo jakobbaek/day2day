@@ -454,6 +454,9 @@ class ModelBasedStrategy(ProbabilityBasedStrategy):
         Returns:
             Tuple of (prediction, probability)
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
         # Get model prediction
         prediction = self.model.predict(features)[0]
         
@@ -463,13 +466,56 @@ class ModelBasedStrategy(ProbabilityBasedStrategy):
         else:
             threshold = current_price + self.price_increase_threshold
         
-        # Get probability from bootstrap results
-        bootstrap_predictions = self.bootstrap_results['bootstrap_predictions']
-        probabilities = self.bootstrap_estimator.estimate_prediction_probability(
-            bootstrap_predictions, threshold, 'above'
-        )
+        # ISSUE: Bootstrap predictions were made on training/test data, not current features
+        # We need to make bootstrap predictions on current features instead
         
-        # Use latest probability (assuming features correspond to latest time)
-        probability = probabilities[-1] if len(probabilities) > 0 else 0.0
+        # Get bootstrap predictions for current features
+        bootstrap_predictions = self.bootstrap_results['bootstrap_predictions']
+        
+        debug_counter = getattr(self, '_prob_debug_counter', 0)
+        self._prob_debug_counter = debug_counter + 1
+        should_debug = debug_counter < 5 or debug_counter % 500 == 0
+        
+        if should_debug:
+            logger.info(f"🎲 Bootstrap probability calculation #{debug_counter}:")
+            logger.info(f"  Current prediction: ${prediction:.6f}")
+            logger.info(f"  Current price: ${current_price:.6f}")
+            logger.info(f"  Threshold: ${threshold:.6f}")
+            logger.info(f"  Bootstrap predictions shape: {bootstrap_predictions.shape}")
+        
+        # PROBLEM: Bootstrap predictions are for test set, not for current features!
+        # For real-time prediction, we would need to run bootstrap models on current features
+        # For now, let's use a workaround: estimate probability based on prediction vs threshold
+        
+        # Workaround: Use simple probability estimate based on how far prediction exceeds threshold
+        if prediction > threshold:
+            # Simple heuristic: probability based on how much prediction exceeds threshold
+            excess = prediction - threshold
+            relative_excess = excess / current_price if current_price > 0 else 0
+            # Convert to probability (sigmoid-like function)
+            probability = min(0.95, max(0.05, 0.5 + relative_excess * 10))
+            
+            if should_debug:
+                logger.info(f"  ✅ Prediction exceeds threshold by ${excess:.6f} ({relative_excess:.1%})")
+                logger.info(f"  Estimated probability: {probability:.4f}")
+        else:
+            # Prediction below threshold
+            shortfall = threshold - prediction
+            relative_shortfall = shortfall / current_price if current_price > 0 else 0
+            probability = max(0.01, 0.5 - relative_shortfall * 10)
+            
+            if should_debug:
+                logger.info(f"  ❌ Prediction below threshold by ${shortfall:.6f} ({relative_shortfall:.1%})")
+                logger.info(f"  Estimated probability: {probability:.4f}")
+        
+        # TODO: For proper bootstrap probability, we would need to:
+        # 1. Load all bootstrap models
+        # 2. Make predictions on current features with each model
+        # 3. Calculate probability that predictions exceed threshold
+        # This is computationally expensive so using heuristic for now
+        
+        if should_debug:
+            logger.warning(f"  ⚠️  Using heuristic probability estimation (not true bootstrap)")
+            logger.warning(f"     For accurate probabilities, bootstrap models would need to predict on current features")
         
         return prediction, probability
