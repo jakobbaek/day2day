@@ -2,6 +2,7 @@
 
 import pandas as pd
 import numpy as np
+import datetime
 from typing import Dict, Any, List, Optional, Tuple
 import logging
 from .strategy import TradingStrategy, Trade
@@ -168,11 +169,11 @@ class Backtester:
     def _is_market_hours(self, timestamp: pd.Timestamp) -> bool:
         """Check if timestamp is within market hours."""
         time = timestamp.time()
-        return pd.time(9, 30) <= time <= pd.time(16, 0)
+        return datetime.time(9, 30) <= time <= datetime.time(16, 0)
     
     def _is_end_of_day(self, timestamp: pd.Timestamp) -> bool:
         """Check if timestamp is end of trading day."""
-        return timestamp.time() >= pd.time(15, 55)
+        return timestamp.time() >= datetime.time(15, 55)
     
     def run_parameter_sweep(self,
                           strategy_class: type,
