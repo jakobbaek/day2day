@@ -788,14 +788,54 @@ class ModelTrainer:
             if uses_percentage_features:
                 logger.info("🔧 Detected percentage features - reconstructing actual prices for backtesting")
                 
-                # Find the target instrument's high price column in original data
-                high_col = f"high_{target_instrument}"
-                
-                if high_col in original_df.columns:
+                # CRITICAL FIX: Load the RAW data (before percentage conversion) instead of processed data
+                raw_data_file = self._find_raw_data_file(training_data_title)
+                if raw_data_file:
+                    logger.info(f"Loading raw data from {raw_data_file} for price reconstruction")
+                    raw_df = self._load_raw_data_for_price_reconstruction(raw_data_file, original_df, X_test)
+                    
+                    if raw_df is not None:
+                        # Find the target instrument's high price column in RAW data
+                        high_col = f"high_{target_instrument}"
+                        
+                        if high_col in raw_df.columns:
+                            # Get actual HIGH prices from RAW data
+                            actual_prices = raw_df[high_col]
+                            test_df['target_actual'] = actual_prices
+                            
+                            # DEBUG: Check the actual values being saved
+                            logger.info(f"Added target_actual column with HIGH prices from RAW data {high_col}")
+                            logger.info(f"Sample target_actual values: {actual_prices.head().tolist()}")
+                            logger.info(f"Target_actual range: {actual_prices.min():.2f} to {actual_prices.max():.2f}")
+                            
+                            # Verify these are actual dollar prices
+                            if actual_prices.abs().median() > 10:  # Should be reasonable stock prices
+                                logger.info("✅ Successfully reconstructed actual dollar prices for backtesting")
+                            else:
+                                logger.warning(f"⚠️ Reconstructed prices seem low (median={actual_prices.abs().median():.2f})")
+                        else:
+                            logger.error(f"Could not find {high_col} in raw data")
+                    else:
+                        logger.error("Could not load raw data for price reconstruction")
+                        
+                # Fallback to processed data (will show warning)
+                else:
+                    logger.warning("Could not find raw data file - using processed data (may contain percentages)")
+                    high_col = f"high_{target_instrument}"
                     # Get actual HIGH prices for test set indices
                     actual_prices = original_df.loc[X_test.index, high_col]
                     test_df['target_actual'] = actual_prices
+                    
+                    # DEBUG: Check the actual values being saved
                     logger.info(f"Added target_actual column with HIGH prices from {high_col}")
+                    logger.info(f"Sample target_actual values: {actual_prices.head().tolist()}")
+                    logger.info(f"Target_actual range: {actual_prices.min():.6f} to {actual_prices.max():.6f}")
+                    
+                    # Check if these are still percentage values (they shouldn't be!)
+                    if actual_prices.abs().median() < 1.0:
+                        logger.error(f"🚨 CRITICAL: target_actual contains small values (median={actual_prices.abs().median():.6f})")
+                        logger.error(f"This suggests the 'original_df' also contains percentage values!")
+                        logger.error(f"We need to load the TRULY original data before percentage conversion")
                     
                     # Also add current price columns for all instruments for position sizing
                     price_columns = [col for col in original_df.columns if any(price_type in col for price_type in ['high_', 'low_', 'open_', 'close_'])]
@@ -861,3 +901,121 @@ class ModelTrainer:
             logger.info(f"Actual price features detected: median_abs={median_abs_value:.4f}, range={value_range:.4f}")
         
         return is_percentage
+    
+    def _find_raw_data_file(self, training_data_title: str) -> Optional[str]:
+        """
+        Find the raw data file that corresponds to the training data.
+        
+        Args:
+            training_data_title: Title of training data (e.g., "danish_test")
+            
+        Returns:
+            Raw data filename if found, None otherwise
+        """
+        # Common raw data file patterns
+        possible_names = [
+            f"{training_data_title}.csv",
+            "danish_stocks_1m.csv",  # Default raw data file
+            f"{training_data_title}_raw.csv",
+            f"{training_data_title}_1m.csv"
+        ]
+        
+        raw_data_path = settings.raw_data_path
+        for filename in possible_names:
+            file_path = raw_data_path / filename
+            if file_path.exists():
+                logger.info(f"Found raw data file: {filename}")
+                return filename
+        
+        # List available raw data files for debugging
+        if raw_data_path.exists():
+            available_files = [f.name for f in raw_data_path.glob("*.csv")]
+            logger.warning(f"Available raw data files: {available_files}")
+        
+        return None
+    
+    def _load_raw_data_for_price_reconstruction(self, raw_filename: str, 
+                                              processed_df: pd.DataFrame, 
+                                              X_test: pd.DataFrame) -> Optional[pd.DataFrame]:
+        """
+        Load raw data and align it with the test set timestamps.
+        
+        Args:
+            raw_filename: Raw data filename
+            processed_df: Processed DataFrame with datetime info
+            X_test: Test features DataFrame
+            
+        Returns:
+            Aligned raw DataFrame or None if alignment fails
+        """
+        try:
+            # Load raw data
+            raw_file_path = settings.raw_data_path / raw_filename
+            raw_df = pd.read_csv(raw_file_path)
+            
+            # Ensure datetime column exists and is properly formatted
+            if 'datetime' not in raw_df.columns:
+                logger.error("Raw data missing datetime column")
+                return None
+            
+            raw_df['datetime'] = pd.to_datetime(raw_df['datetime'])
+            
+            # Get the test set timestamps from processed data
+            test_timestamps = processed_df.loc[X_test.index, 'datetime']
+            
+            logger.info(f"Raw data shape: {raw_df.shape}")
+            logger.info(f"Test timestamps shape: {len(test_timestamps)}")
+            logger.info(f"Sample test timestamp: {test_timestamps.iloc[0]}")
+            logger.info(f"Sample raw timestamp: {raw_df['datetime'].iloc[0]}")
+            
+            # Align raw data with test timestamps
+            # Create a mapping from datetime to raw data rows
+            raw_df_indexed = raw_df.set_index('datetime')
+            
+            # Find matching rows for test timestamps
+            aligned_rows = []
+            successful_matches = 0
+            
+            for timestamp in test_timestamps:
+                try:
+                    # Try exact match first
+                    if timestamp in raw_df_indexed.index:
+                        aligned_rows.append(raw_df_indexed.loc[timestamp])
+                        successful_matches += 1
+                    else:
+                        # Try nearest match (within 5 minutes)
+                        time_diff = (raw_df_indexed.index - timestamp).abs()
+                        min_diff_idx = time_diff.argmin()
+                        min_diff = time_diff.iloc[min_diff_idx]
+                        
+                        if min_diff <= pd.Timedelta(minutes=5):
+                            aligned_rows.append(raw_df_indexed.iloc[min_diff_idx])
+                            successful_matches += 1
+                        else:
+                            # No close match found, add NaN row
+                            nan_row = pd.Series(index=raw_df_indexed.columns, dtype=float)
+                            aligned_rows.append(nan_row)
+                            
+                except Exception as e:
+                    logger.debug(f"Failed to match timestamp {timestamp}: {e}")
+                    nan_row = pd.Series(index=raw_df_indexed.columns, dtype=float)
+                    aligned_rows.append(nan_row)
+            
+            if successful_matches == 0:
+                logger.error("No timestamps could be matched between raw and test data")
+                return None
+            
+            # Convert list of series to DataFrame
+            aligned_df = pd.DataFrame(aligned_rows).reset_index(drop=True)
+            
+            match_rate = successful_matches / len(test_timestamps)
+            logger.info(f"Successfully matched {successful_matches}/{len(test_timestamps)} timestamps ({match_rate:.1%})")
+            
+            if match_rate < 0.8:  # Less than 80% match rate
+                logger.warning(f"Low timestamp match rate ({match_rate:.1%}) - price reconstruction may be inaccurate")
+            
+            return aligned_df
+            
+        except Exception as e:
+            logger.error(f"Failed to load and align raw data: {e}")
+            return None
